@@ -1,12 +1,14 @@
 {
   "name": "@botschat/openclaw-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BotsChat channel plugin for OpenClaw — connects your OpenClaw agent to the BotsChat cloud platform",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "scripts": {
     "build": "tsc",
@@ -30,7 +32,13 @@
     "@types/ws": "^8.5.0",
     "typescript": "^5.7.0"
   },
-  "keywords": ["openclaw", "botschat", "channel", "plugin", "chat"],
+  "keywords": [
+    "openclaw",
+    "botschat",
+    "channel",
+    "plugin",
+    "chat"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
