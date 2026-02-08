@@ -1,6 +1,7 @@
 {
   "name": "botschat",
-  "private": true,
+  "version": "0.1.0",
+  "description": "A self-hosted chat interface for OpenClaw AI agents",
   "workspaces": [
     "packages/*"
   ],
@@ -15,6 +16,35 @@
     "db:migrate:remote": "wrangler d1 migrations apply botschat-db --remote",
     "typecheck": "tsc --noEmit",
     "build:plugin": "npm run build -w packages/plugin"
+  },
+  "files": [
+    "packages/api/src/",
+    "packages/api/package.json",
+    "packages/api/tsconfig.json",
+    "packages/plugin/dist/",
+    "packages/plugin/openclaw.plugin.json",
+    "packages/plugin/package.json",
+    "packages/plugin/tsconfig.json",
+    "packages/web/src/",
+    "packages/web/dist/",
+    "packages/web/index.html",
+    "packages/web/package.json",
+    "packages/web/tsconfig.json",
+    "packages/web/vite.config.ts",
+    "packages/web/tailwind.config.js",
+    "packages/web/postcss.config.js",
+    "migrations/",
+    "scripts/",
+    "wrangler.toml",
+    "tsconfig.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/botschat-app/botsChat.git"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

@@ -108,7 +108,7 @@ After the BotsChat server is running, connect your OpenClaw instance to it.
 **1. Install the plugin**
 
 ```bash
-openclaw plugins install @openclaw/botschat
+openclaw plugins install @botschat/openclaw-plugin
 ```
 
 **2. Create a pairing token**
@@ -207,48 +207,6 @@ npm run build:plugin
 npm run typecheck
 ```
 
-### Project Structure
-
-```
-botsChat/
-├── packages/
-│   ├── plugin/        # @botschat/openclaw-plugin (OpenClaw channel plugin)
-│   ├── api/           # Cloudflare Workers API (Hono + Durable Objects)
-│   └── web/           # React SPA (Vite + Tailwind)
-├── migrations/        # D1 database schema
-├── scripts/           # Dev helper scripts
-├── wrangler.toml      # Wrangler configuration
-└── package.json       # Monorepo root (npm workspaces)
-```
-
-### Source Layout
-
-```
-packages/plugin/         OpenClaw channel plugin
-  index.ts               Plugin entry point (register)
-  src/channel.ts         ChannelPlugin implementation (all adapters)
-  src/ws-client.ts       Outbound WSS client with reconnection
-  src/accounts.ts        Account config helpers
-  src/types.ts           Config + protocol types
-
-packages/api/            API server
-  src/index.ts           Hono app + route wiring + WS proxy
-  src/do/connection-do.ts   Durable Object (WebSocket relay)
-  src/routes/auth.ts     Register / login
-  src/routes/channels.ts Channel CRUD
-  src/routes/tasks.ts    Task CRUD (background + adhoc)
-  src/routes/pairing.ts  Pairing token management
-
-packages/web/            React frontend
-  src/App.tsx            Main app (state, WS lifecycle)
-  src/components/
-    Sidebar.tsx          Channel list
-    TaskBar.tsx          Task pill switcher
-    ChatWindow.tsx       Chat messages + input
-    ThreadPanel.tsx      Slide-out thread panel
-    JobList.tsx          Background task execution history
-    LoginPage.tsx        Auth form
-```
 
 ## License
 
