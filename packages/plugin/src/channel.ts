@@ -392,6 +392,8 @@ async function handleCloudMessage(
           ChatType: threadId ? "thread" : "direct",
           Channel: "botschat",
           MessageChannel: "botschat",
+          Provider: "botschat",
+          Surface: "botschat",
           CommandAuthorized: true,
           // A2UI format instructions are injected via agentPrompt.messageToolHints
           // (inside the message tool docs in the system prompt) — no GroupSystemPrompt needed.
