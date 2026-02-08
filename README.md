@@ -6,26 +6,11 @@ BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw ag
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Your Machine                                                         │
-│                                                                       │
-│  ┌───────────────────────┐     outbound WSS      ┌────────────────┐   │
-│  │ OpenClaw Gateway      │ ────────────────────>  │ BotsChat       │   │
-│  │  + BotsChat Plugin    │                        │ (Wrangler)     │   │
-│  │  + Your AI Agents     │  <── agent responses   │                │   │
-│  │  + Your API Keys      │  ──> user messages     │  ┌──────────┐  │   │
-│  └───────────────────────┘                        │  │ Web UI   │  │   │
-│                                                   │  │ (React)  │  │   │
-│         AI processing happens here.               │  └──────────┘  │   │
-│         Nothing leaves your machine.              └────────────────┘   │
-│                                                     localhost:8787     │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+![BotsChat Architecture](docs/architecture.png)
 
-OpenClaw runs your agents locally (with your API keys, data, and configs). It connects via **outbound WebSocket** to the BotsChat server — which can also run on the same machine. No cloud account required, no port forwarding, no tunnels.
+OpenClaw runs your agents locally (with your API keys, data, and configs). The BotsChat plugin establishes an **outbound WebSocket** to the BotsChat server — no port forwarding, no tunnels. Your API keys and data never leave your machine; only chat messages travel through the relay.
 
-> **Optional:** You can also deploy BotsChat to Cloudflare Workers for remote access. See [Deploy to Cloudflare](#deploy-to-cloudflare) below.
+You can run BotsChat locally on the same machine, or deploy it to Cloudflare for remote access (e.g. from your phone).
 
 ## Concepts
 
@@ -44,9 +29,15 @@ BotsChat introduces a few UI-level concepts that map to OpenClaw primitives:
 - **Background Task** — runs on a cron schedule (e.g. "post a tweet every 6 hours"). Each run creates a Job with its own conversation session.
 - **Ad Hoc Chat** — a regular conversation you start whenever you want.
 
-## Quick Start
+## Getting Started
 
-### 1. Clone and install
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 22+
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
+- An [OpenClaw](https://github.com/openclaw/openclaw) instance
+
+### Step 1: Clone and Install
 
 ```bash
 git clone https://github.com/botschat-app/botsChat.git
@@ -54,34 +45,84 @@ cd botsChat
 npm install
 ```
 
-### 2. Start the server
+### Step 2: Deploy BotsChat Server
+
+Choose one of the two options below:
+
+#### Option A: Run Locally
+
+Wrangler uses [Miniflare](https://miniflare.dev) under the hood, so D1, R2, and Durable Objects all run locally — **no Cloudflare account needed**.
 
 ```bash
-# One-command startup: build web → migrate D1 → start server
+# One-command startup: build web → migrate D1 → start server on 0.0.0.0:8787
 ./scripts/dev.sh
+```
 
-# Or step by step:
-npm run build -w packages/web       # Build the React frontend
-npm run db:migrate                   # Apply D1 migrations (local)
+Or step by step:
+
+```bash
+npm run build -w packages/web                          # Build the React frontend
+npm run db:migrate                                     # Apply D1 migrations (local)
 npx wrangler dev --config wrangler.toml --ip 0.0.0.0   # Start on port 8787
 ```
 
-Open `http://localhost:8787` in your browser. Register an account and generate a **pairing token** from the dashboard.
+Open `http://localhost:8787` in your browser.
 
-> Wrangler uses [Miniflare](https://miniflare.dev) under the hood, so D1, R2, and Durable Objects all run locally — **no Cloudflare account needed**.
-
-### 3. Connect OpenClaw
-
-On the machine running OpenClaw:
+Other dev commands:
 
 ```bash
-# Install the BotsChat plugin
-openclaw plugins install @botschat/openclaw-plugin
+./scripts/dev.sh reset     # Nuke local DB → re-migrate → start
+./scripts/dev.sh migrate   # Only run D1 migrations
+./scripts/dev.sh build     # Only build web frontend
+./scripts/dev.sh sync      # Sync plugin to remote OpenClaw host + restart gateway
+./scripts/dev.sh logs      # Tail remote gateway logs
+```
 
-# Point it to your BotsChat server
-openclaw channel setup botschat \
-  --url http://localhost:8787 \
-  --token bc_pat_xxxxxxxxxxxxxxxx
+#### Option B: Deploy to Cloudflare
+
+For remote access (e.g. chatting with your agents from your phone), deploy to Cloudflare Workers. The free tier is more than enough for personal use.
+
+```bash
+# Create Cloudflare resources
+wrangler d1 create botschat-db          # Copy the database_id into wrangler.toml
+wrangler r2 bucket create botschat-media
+
+# Build & deploy
+npm run build -w packages/web           # Build the React frontend
+npm run deploy                          # Deploy API + web + Durable Objects
+npm run db:migrate:remote               # Apply migrations to remote D1
+wrangler secret put JWT_SECRET          # Set a production JWT secret
+```
+
+| Service          | Purpose                                | Free Tier                        |
+|------------------|----------------------------------------|----------------------------------|
+| Workers          | API server (Hono)                      | 100K req/day                     |
+| Durable Objects  | WebSocket relay (ConnectionDO)         | 1M req/mo, hibernation = free    |
+| D1               | Database (users, channels, tasks)      | 5M reads/day, 100K writes/day   |
+| R2               | Media storage                          | 10GB, no egress fees             |
+
+### Step 3: Install the OpenClaw Plugin
+
+After the BotsChat server is running, connect your OpenClaw instance to it.
+
+**1. Install the plugin**
+
+```bash
+openclaw plugins install @openclaw/botschat
+```
+
+**2. Create a pairing token**
+
+Open the BotsChat web UI, register an account, and generate a **pairing token** from the dashboard.
+
+**3. Configure the connection**
+
+```bash
+# For local deployment, use http://localhost:8787 or your LAN IP
+# For Cloudflare deployment, use your Workers URL
+openclaw config set channels.botschat.cloudUrl <BOTSCHAT_URL>
+openclaw config set channels.botschat.pairingToken <YOUR_PAIRING_TOKEN>
+openclaw config set channels.botschat.enabled true
 ```
 
 This writes the following to your `~/.openclaw/openclaw.json`:
@@ -98,21 +139,20 @@ This writes the following to your `~/.openclaw/openclaw.json`:
 }
 ```
 
-### 4. Verify
+**4. Restart the gateway and verify**
 
 ```bash
-openclaw channels status
+openclaw gateway restart
 ```
 
-You should see:
+Check the gateway logs — you should see:
 
 ```
-Channel    Account    Status
-─────────  ─────────  ──────────────────
-BotsChat   default    connected ✓
+Authenticated with BotsChat cloud
+Task scan complete
 ```
 
-Open `http://localhost:8787` in your browser, sign in, and start chatting with your agents.
+Open the BotsChat web UI in your browser, sign in, and start chatting with your agents.
 
 ### How It Works
 
@@ -121,42 +161,9 @@ Open `http://localhost:8787` in your browser, sign in, and start chatting with y
 3. When you type a message in the web UI, it travels: **Browser → ConnectionDO → WebSocket → OpenClaw → Agent → response back through the same path**.
 4. Your API keys, agent configs, and data never leave your machine — only chat messages travel through the relay.
 
-### Managing Channels
+## Plugin Reference
 
-Each Channel maps to an OpenClaw Agent. When you create a Channel in the web UI, it tells OpenClaw to configure a new agent:
-
-```json
-{
-  "agents": {
-    "list": [
-      { "id": "research", "name": "Research Bot" },
-      { "id": "social-media", "name": "Social Media Manager" }
-    ]
-  }
-}
-```
-
-Each agent has its own isolated workspace, system prompt, tools, and sessions.
-
-### Background Tasks (Cron Jobs)
-
-Background Tasks map to OpenClaw CronJobs. When you create one in the web UI (e.g. "Post tweet every 6 hours"), BotsChat writes a cron config to OpenClaw:
-
-```json
-{
-  "id": "cron_abc123",
-  "agentId": "social-media",
-  "name": "Scheduled Tweets",
-  "schedule": { "type": "every", "intervalMs": 21600000 },
-  "enabled": true,
-  "sessionTarget": "isolated",
-  "payload": { "kind": "agentTurn", "prompt": "Post a tweet about..." }
-}
-```
-
-Each execution (Job) creates its own session. You can click on any Job in the web UI to see what the agent did and continue the conversation.
-
-### Plugin Configuration Reference
+### Configuration
 
 All config lives under `channels.botschat` in your `openclaw.json`:
 
@@ -167,6 +174,15 @@ All config lives under `channels.botschat` in your `openclaw.json`:
 | `pairingToken`  | string  | yes      | Your pairing token from the BotsChat dashboard       |
 | `name`          | string  | no       | Display name for this connection                     |
 
+### Message Protocol
+
+The plugin uses a JSON-based WebSocket protocol:
+
+| Direction          | Message Types                                                    |
+|--------------------|------------------------------------------------------------------|
+| Cloud → Plugin     | `user.message`, `user.action`, `user.command`, `task.schedule`, `task.delete`, `task.run`, `task.scan.request` |
+| Plugin → Cloud     | `agent.text`, `agent.media`, `agent.a2ui`, `agent.stream.*`, `job.update`, `job.output`, `task.scan.result`, `model.changed` |
+
 ### Uninstall
 
 ```bash
@@ -174,54 +190,6 @@ openclaw plugins disable botschat
 # or remove entirely:
 openclaw plugins remove botschat
 ```
-
----
-
-## Deploy to Cloudflare
-
-For remote access (e.g. chatting with your agents from your phone), you can deploy BotsChat to Cloudflare Workers. The free tier is more than enough for personal use.
-
-### Prerequisites
-
-- [Cloudflare account](https://dash.cloudflare.com/) (free plan works)
-
-### Create Resources
-
-```bash
-# Create D1 database
-wrangler d1 create botschat-db
-# Copy the database_id from the output into wrangler.toml
-
-# Create R2 bucket
-wrangler r2 bucket create botschat-media
-```
-
-Update `wrangler.toml` with the actual `database_id`.
-
-### Deploy
-
-```bash
-# Build web frontend
-npm run build -w packages/web
-
-# Deploy everything (API + web + Durable Objects)
-npm run deploy
-
-# Apply migrations to remote D1
-npm run db:migrate:remote
-
-# Set a production JWT secret
-wrangler secret put JWT_SECRET
-```
-
-### Cloudflare Services Used
-
-| Service          | Purpose                                | Free Tier                        |
-|------------------|----------------------------------------|----------------------------------|
-| Workers          | API server (Hono)                      | 100K req/day                     |
-| Durable Objects  | WebSocket relay (ConnectionDO)         | 1M req/mo, hibernation = free    |
-| D1               | Database (users, channels, tasks)      | 5M reads/day, 100K writes/day   |
-| R2               | Media storage                          | 10GB, no egress fees             |
 
 ---
 
@@ -284,4 +252,4 @@ packages/web/            React frontend
 
 ## License
 
-MIT
+Apache-2.0
