@@ -1,0 +1,55 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write   # Required for npm trusted publishing (OIDC)
+  contents: write    # Required for pushing version bump commit
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Update version in package.json files
+        run: |
+          npm version "${{ steps.version.outputs.VERSION }}" --no-git-tag-version
+          npm version "${{ steps.version.outputs.VERSION }}" --no-git-tag-version -w packages/plugin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin
+        run: npm run build -w packages/plugin
+
+      - name: Build web
+        run: npm run build -w packages/web
+
+      - name: Publish plugin
+        run: npm publish -w packages/plugin --access public
+
+      - name: Publish root package
+        run: npm publish --access public
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json packages/plugin/package.json package-lock.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:main

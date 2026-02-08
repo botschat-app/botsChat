@@ -1,5 +1,9 @@
 # BotsChat
 
+[![npm](https://img.shields.io/npm/v/botschat)](https://www.npmjs.com/package/botschat)
+[![npm](https://img.shields.io/npm/v/@botschat/openclaw-plugin)](https://www.npmjs.com/package/@botschat/openclaw-plugin)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 A self-hosted chat interface for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
 BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw agents — organize conversations into **Channels**, schedule **Background Tasks**, and monitor **Job** executions. Everything runs on your own infrastructure; your API keys and data never leave your machine.
