@@ -1,0 +1,723 @@
+import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { useAppState, useAppDispatch, type ChatMessage } from "../store";
+import type { WSMessage } from "../ws";
+import { MessageContent } from "./MessageContent";
+import { ModelSelect } from "./ModelSelect";
+import { SessionTabs } from "./SessionTabs";
+import { dlog } from "../debug-log";
+
+type ChatWindowProps = {
+  sendMessage: (msg: WSMessage) => void;
+};
+
+/** Simple string hash for action prompt keys (matches MessageContent) */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
+
+// ---------------------------------------------------------------------------
+// Skill definitions & frequency tracking (v2 – recency-aware, daily buckets)
+// ---------------------------------------------------------------------------
+// Storage: localStorage (per-origin). Data persists across page reloads but
+// lives separately per origin (localhost:8787 vs localhost:3000). The v2 format
+// stores daily usage buckets so we can weight recent activity higher.
+// ---------------------------------------------------------------------------
+
+type Skill = { cmd: string; label: string; icon: string };
+
+/** Default skills — shown even before any usage */
+const DEFAULT_SKILLS: Skill[] = [
+  { cmd: "/help",      label: "Help",      icon: "?" },
+  { cmd: "/status",    label: "Status",    icon: "i" },
+  { cmd: "/model",     label: "Model",     icon: "M" },
+  { cmd: "/clear",     label: "Clear",     icon: "C" },
+  { cmd: "/think",     label: "Think",     icon: "T" },
+  { cmd: "/image",     label: "Image",     icon: "I" },
+  { cmd: "/search",    label: "Search",    icon: "S" },
+  { cmd: "/summarize", label: "Summarize", icon: "Σ" },
+  { cmd: "/translate", label: "Translate", icon: "翻" },
+  { cmd: "/reset",     label: "Reset",     icon: "R" },
+];
+
+// --- v2 storage types ---
+type SkillEntry = { total: number; daily: Record<string, number> };
+type SkillStore = Record<string, SkillEntry>;
+
+const STORE_KEY = "botschat_skill_freq_v2";
+const V1_KEY = "botschat_skill_freq";
+const RECENCY_DAYS = 2;   // window for "recent" weighting
+const PRUNE_DAYS = 14;    // drop daily buckets older than this
+
+function dateKey(d = new Date()): string {
+  return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+}
+
+/** Prune daily buckets older than PRUNE_DAYS in-place. */
+function pruneStore(store: SkillStore) {
+  const cutoff = Date.now() - PRUNE_DAYS * 86_400_000;
+  for (const entry of Object.values(store)) {
+    for (const ds of Object.keys(entry.daily)) {
+      if (new Date(ds).getTime() < cutoff) delete entry.daily[ds];
+    }
+  }
+}
+
+/** Load skill frequency store, migrating from v1 if needed. */
+function loadSkillStore(): SkillStore {
+  try {
+    // Try v2 first
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const store: SkillStore = JSON.parse(raw);
+      pruneStore(store);
+      return store;
+    }
+    // Auto-migrate from v1 (plain Record<string, number>)
+    const v1 = localStorage.getItem(V1_KEY);
+    if (v1) {
+      const old: Record<string, number> = JSON.parse(v1);
+      const today = dateKey();
+      const store: SkillStore = {};
+      for (const [cmd, count] of Object.entries(old)) {
+        store[cmd] = { total: count, daily: { [today]: count } };
+      }
+      saveSkillStore(store);
+      localStorage.removeItem(V1_KEY);
+      return store;
+    }
+    return {};
+  } catch { return {}; }
+}
+
+function saveSkillStore(store: SkillStore) {
+  pruneStore(store);
+  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+}
+
+/** Detect and record a /command from the message text. Returns the command if found. */
+function recordSkillUsage(text: string): string | null {
+  const match = text.match(/^\/(\S+)/);
+  if (!match) return null;
+  const cmd = `/${match[1]}`;
+  const store = loadSkillStore();
+  const today = dateKey();
+  if (!store[cmd]) store[cmd] = { total: 0, daily: {} };
+  store[cmd].total += 1;
+  store[cmd].daily[today] = (store[cmd].daily[today] ?? 0) + 1;
+  saveSkillStore(store);
+  return cmd;
+}
+
+/** Count usages within the last RECENCY_DAYS. */
+function recentCount(entry: SkillEntry): number {
+  const cutoff = Date.now() - RECENCY_DAYS * 86_400_000;
+  let sum = 0;
+  for (const [ds, cnt] of Object.entries(entry.daily)) {
+    if (new Date(ds).getTime() >= cutoff) sum += cnt;
+  }
+  return sum;
+}
+
+/** Composite score: recent usage * 5 + all-time total. */
+function skillScore(entry: SkillEntry): number {
+  return recentCount(entry) * 5 + entry.total;
+}
+
+/**
+ * Return default skills + user-typed custom skills, sorted by a composite
+ * recency score (skills used more in the last 2 days float to the front).
+ */
+function getSortedSkills(): { skills: Skill[]; store: SkillStore } {
+  const store = loadSkillStore();
+  const defaultCmds = new Set(DEFAULT_SKILLS.map((s) => s.cmd));
+  // Build entries for user-typed skills that aren't in the default list
+  const customSkills: Skill[] = Object.keys(store)
+    .filter((cmd) => !defaultCmds.has(cmd) && cmd.startsWith("/"))
+    .map((cmd) => ({
+      cmd,
+      label: cmd.slice(1).charAt(0).toUpperCase() + cmd.slice(2),
+      icon: cmd.slice(1).charAt(0).toUpperCase(),
+    }));
+  const skills = [...DEFAULT_SKILLS, ...customSkills].sort((a, b) => {
+    const sa = store[a.cmd] ? skillScore(store[a.cmd]) : 0;
+    const sb = store[b.cmd] ? skillScore(store[b.cmd]) : 0;
+    return sb - sa;
+  });
+  return { skills, store };
+}
+
+/** Flat-row message display + composer, per design guideline section 5.2/5.6 */
+export function ChatWindow({ sendMessage }: ChatWindowProps) {
+  const state = useAppState();
+  const dispatch = useAppDispatch();
+  const [input, setInput] = useState("");
+  const [skillVersion, setSkillVersion] = useState(0); // bump to re-sort skills
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const sessionKey = state.selectedSessionKey;
+
+  const { skills: sortedSkills, store: skillStore } = useMemo(
+    () => getSortedSkills(),
+    [skillVersion],
+  );
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [state.messages]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+      inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 160) + "px";
+    }
+  }, [input]);
+
+  // Auto-focus the input when a session is active (page load or channel switch)
+  useEffect(() => {
+    if (sessionKey && inputRef.current) {
+      // Small delay to ensure DOM is ready after render
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+    }
+  }, [sessionKey]);
+
+  // Restore per-session model from localStorage when session changes
+  useEffect(() => {
+    if (!sessionKey) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem("botschat:sessionModels") || "{}");
+      const saved = stored[sessionKey];
+      if (saved && saved !== state.sessionModel) {
+        dispatch({ type: "SET_SESSION_MODEL", model: saved });
+      } else if (!saved && state.sessionModel) {
+        // New session with no override — clear sessionModel so defaultModel shows
+        dispatch({ type: "SET_SESSION_MODEL", model: null });
+      }
+    } catch { /* ignore */ }
+  }, [sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentModel = state.sessionModel ?? state.defaultModel;
+
+  const handleModelChange = useCallback((modelId: string) => {
+    if (!modelId || !sessionKey || modelId === currentModel) return;
+
+    dlog.info("Chat", `Model change: ${currentModel ?? "none"} → ${modelId}`);
+
+    // Optimistically update the dropdown immediately
+    dispatch({ type: "SET_SESSION_MODEL", model: modelId });
+
+    // Persist per-session model to localStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem("botschat:sessionModels") || "{}");
+      stored[sessionKey] = modelId;
+      localStorage.setItem("botschat:sessionModels", JSON.stringify(stored));
+    } catch { /* ignore */ }
+
+    recordSkillUsage("/model");
+    setSkillVersion((v) => v + 1);
+
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: "user",
+      text: `/model ${modelId}`,
+      timestamp: Date.now(),
+    };
+    dispatch({ type: "ADD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey,
+      text: `/model ${modelId}`,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  }, [sessionKey, currentModel, state.user?.id, sendMessage, dispatch]);
+
+  const handleSkillClick = useCallback((cmd: string) => {
+    dlog.info("Skill", `Skill button clicked: ${cmd}`);
+    setInput((prev) => {
+      // If input already starts with this command, don't duplicate
+      if (prev.startsWith(cmd + " ") || prev === cmd) return prev;
+      return cmd + " ";
+    });
+    inputRef.current?.focus();
+  }, []);
+
+  const handleSend = () => {
+    if (!input.trim() || !sessionKey) return;
+
+    const trimmed = input.trim();
+    const isSkill = trimmed.startsWith("/");
+    dlog.info("Chat", `Send message${isSkill ? " (skill)" : ""}: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { sessionKey, isSkill });
+
+    // Track skill usage
+    recordSkillUsage(trimmed);
+    setSkillVersion((v) => v + 1);
+
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: "user",
+      text: trimmed,
+      timestamp: Date.now(),
+    };
+
+    dispatch({ type: "ADD_MESSAGE", message: msg });
+
+    sendMessage({
+      type: "user.message",
+      sessionKey,
+      text: trimmed,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+
+    setInput("");
+
+    // Scroll to bottom after sending
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  };
+
+  const openThread = (messageId: string) => {
+    dlog.info("Thread", `Open thread for message: ${messageId}`);
+    dispatch({ type: "OPEN_THREAD", threadId: messageId, messages: [] });
+  };
+
+  /** Handle A2UI action button clicks — sends the action text as a user message */
+  const handleA2UIAction = useCallback((action: string) => {
+    if (!sessionKey) return;
+    dlog.info("A2UI", `Action triggered: ${action}`);
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: "user",
+      text: action,
+      timestamp: Date.now(),
+    };
+    dispatch({ type: "ADD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey,
+      text: action,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  }, [sessionKey, state.user?.id, sendMessage, dispatch]);
+
+  /** Handle ActionCard resolve — marks widget done + sends the choice as user message */
+  const handleResolveAction = useCallback((messageId: string, value: string, label: string) => {
+    if (!sessionKey) return;
+    dlog.info("ActionCard", `Resolved: "${label}" (value="${value}")`);
+
+    // Compute a simple hash from value+label for the prompt key
+    const promptHash = simpleHash(label + value);
+
+    // Mark the action as resolved in the store
+    dispatch({ type: "RESOLVE_ACTION", messageId, promptHash, value, label });
+
+    // Send the chosen label as a user message (show the readable label, not the
+    // technical value, so the chat history reads naturally)
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: "user",
+      text: label,
+      timestamp: Date.now(),
+    };
+    dispatch({ type: "ADD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey,
+      text: label,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  }, [sessionKey, state.user?.id, sendMessage, dispatch]);
+
+  const selectedAgent = state.agents.find((a) => a.id === state.selectedAgentId);
+  const channelName = selectedAgent?.name ?? "channel";
+  const channelId = selectedAgent?.channelId ?? null;
+  // Always show session tabs — for all channels including default (General)
+  const showSessionTabs = !!selectedAgent;
+
+  if (!sessionKey) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
+        <div className="text-center">
+          <svg className="w-16 h-16 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1} style={{ color: "var(--text-muted)" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+          </svg>
+          <p className="text-body font-bold" style={{ color: "var(--text-muted)" }}>
+            Select a channel to get started
+          </p>
+          <p className="text-caption mt-1" style={{ color: "var(--text-muted)" }}>
+            Choose a channel from the sidebar
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
+      {/* Channel header */}
+      <div
+        className="flex items-center justify-between px-5"
+        style={{
+          height: 44,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-h1" style={{ color: "var(--text-primary)" }}>
+            # {channelName}
+          </span>
+          {selectedAgent && !selectedAgent.isDefault && (
+            <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
+              — custom channel
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+          </svg>
+          <ModelSelect
+            value={currentModel ?? ""}
+            onChange={handleModelChange}
+            models={state.models}
+            disabled={!state.openclawConnected}
+            placeholder="No model"
+            compact
+          />
+        </div>
+      </div>
+
+      {/* Session tabs — shown for all agents (including default/General) */}
+      {showSessionTabs && <SessionTabs channelId={channelId} />}
+
+      {/* Messages – flat-row layout */}
+      <div className="flex-1 overflow-y-auto">
+        {state.messages.length === 0 && (
+          <div className="py-12 px-5 text-center">
+            <p className="text-caption" style={{ color: "var(--text-muted)" }}>
+              No messages yet. Start a conversation.
+            </p>
+          </div>
+        )}
+        {state.messages.map((msg, i) => {
+          const prevMsg = i > 0 ? state.messages[i - 1] : null;
+          const isGrouped = prevMsg?.sender === msg.sender
+            && (msg.timestamp - prevMsg.timestamp) < 300000; // 5 min
+
+          return (
+            <MessageRow
+              key={msg.id}
+              msg={msg}
+              grouped={isGrouped}
+              onOpenThread={() => openThread(msg.id)}
+              onAction={handleA2UIAction}
+              onResolveAction={(value, label) => handleResolveAction(msg.id, value, label)}
+            />
+          );
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Composer (section 5.6) */}
+      <div className="px-5 pb-4 pt-2">
+        {/* Skill buttons — sorted by recency-weighted score */}
+        <div className="flex items-center gap-1.5 pb-1.5 overflow-x-auto no-scrollbar">
+          {sortedSkills.map((skill) => {
+            const entry = skillStore[skill.cmd];
+            const count = entry?.total ?? 0;
+            const recent = entry ? recentCount(entry) : 0;
+            const isActive = input.startsWith(skill.cmd + " ") || input === skill.cmd;
+            return (
+              <button
+                key={skill.cmd}
+                onClick={() => handleSkillClick(skill.cmd)}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs whitespace-nowrap transition-colors shrink-0"
+                style={{
+                  background: isActive ? "var(--bg-active)" : "var(--bg-hover)",
+                  color: isActive ? "#fff" : "var(--text-secondary)",
+                  border: "1px solid transparent",
+                }}
+                title={`${skill.cmd}${count > 0 ? ` (total ${count}x${recent > 0 ? `, recent ${recent}x` : ""})` : ""}`}
+              >
+                <span className="font-mono text-[10px] opacity-70">{skill.cmd}</span>
+                {count > 0 && (
+                  <span
+                    className="ml-0.5 px-1 rounded-sm text-[10px] font-bold"
+                    style={{
+                      background: isActive ? "rgba(255,255,255,0.2)" : "var(--bg-surface)",
+                      color: isActive ? "#fff" : "var(--text-muted)",
+                    }}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          className="rounded-md"
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--bg-surface)",
+          }}
+        >
+          {/* Textarea */}
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={
+              state.openclawConnected
+                ? `Message #${channelName}`
+                : "OpenClaw is offline…"
+            }
+            disabled={!state.openclawConnected}
+            rows={1}
+            className="w-full px-3 py-2.5 text-body bg-transparent resize-none focus:outline-none disabled:opacity-50 placeholder:text-[--text-muted]"
+            style={{ color: "var(--text-primary)", minHeight: 40 }}
+          />
+
+          {/* Bottom toolbar */}
+          <div className="flex items-center justify-between px-3 pb-2">
+            <div className="flex items-center gap-1">
+              {/* Quick actions */}
+              <ToolbarButton label="Format" icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                </svg>
+              } />
+              <ToolbarButton label="Emoji" icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
+                </svg>
+              } />
+              <ToolbarButton label="Mention" icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25" />
+                </svg>
+              } />
+              <ToolbarButton label="Attach" icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                </svg>
+              } />
+            </div>
+
+            {/* Send button */}
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || !state.openclawConnected}
+              className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              style={{ background: "var(--bg-active)" }}
+            >
+              <div className="flex items-center gap-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                </svg>
+                Send
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Flat-row message item (section 5.2) */
+function MessageRow({
+  msg,
+  grouped,
+  onOpenThread,
+  onAction,
+  onResolveAction,
+}: {
+  msg: ChatMessage;
+  grouped: boolean;
+  onOpenThread: () => void;
+  onAction?: (action: string) => void;
+  onResolveAction?: (value: string, label: string) => void;
+}) {
+  const state = useAppState();
+  const senderLabel = msg.sender === "user" ? "You" : "OpenClaw Agent";
+  const avatarColor = msg.sender === "user" ? "#9B59B6" : "#2BAC76";
+  const initial = msg.sender === "user" ? "U" : "A";
+  const replyCount = state.threadReplyCounts[msg.id] ?? 0;
+
+  return (
+    <div
+      className="group relative px-5 hover:bg-[--bg-hover] transition-colors"
+      style={{ paddingTop: grouped ? 2 : 8, paddingBottom: 2 }}
+    >
+      <div className="flex gap-2 max-w-message">
+        {/* Avatar column */}
+        <div className="flex-shrink-0" style={{ width: 36 }}>
+          {!grouped && (
+            <div
+              className="w-9 h-9 rounded flex items-center justify-center text-white text-caption font-bold"
+              style={{ background: avatarColor }}
+            >
+              {initial}
+            </div>
+          )}
+        </div>
+
+        {/* Content column */}
+        <div className="flex-1 min-w-0">
+          {!grouped && (
+            <div className="flex items-baseline gap-2 mb-0.5">
+              <span className="text-h2" style={{ color: "var(--text-primary)" }}>
+                {senderLabel}
+              </span>
+              <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
+                {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+          )}
+          <MessageContent
+            text={msg.text}
+            mediaUrl={msg.mediaUrl}
+            a2ui={msg.a2ui}
+            isStreaming={msg.isStreaming}
+            onAction={onAction}
+            onResolveAction={onResolveAction}
+            resolvedActions={msg.resolvedActions}
+          />
+          {msg.isStreaming && (
+            <span
+              className="inline-block w-1.5 h-4 ml-0.5 rounded-sm animate-pulse"
+              style={{ background: "var(--text-link)", verticalAlign: "text-bottom" }}
+            />
+          )}
+
+          {/* Thread bar – shown when this message has thread replies */}
+          {replyCount > 0 && (
+            <button
+              onClick={onOpenThread}
+              className="flex items-center gap-2 mt-1 py-1 px-1 -ml-1 rounded hover:bg-[--bg-hover] transition-colors cursor-pointer group/thread"
+            >
+              <span
+                className="text-caption font-bold"
+                style={{ color: "var(--text-link)" }}
+              >
+                {replyCount} {replyCount === 1 ? "reply" : "replies"}
+              </span>
+              <span
+                className="text-caption opacity-0 group-hover/thread:opacity-100 transition-opacity"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                View thread
+              </span>
+              <svg
+                className="w-4 h-4 opacity-0 group-hover/thread:opacity-100 transition-opacity"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                style={{ color: "var(--text-secondary)" }}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Action bar (section 5.3) – appears on hover */}
+      <div
+        className="absolute top-0 right-5 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 px-1 py-0.5 rounded"
+        style={{
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-sm)",
+        }}
+      >
+        <ActionButton label="React" icon={
+          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
+          </svg>
+        } />
+        <ActionButton label="Reply in thread" icon={
+          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+          </svg>
+        } onClick={onOpenThread} />
+        <ActionButton label="More" icon={
+          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+          </svg>
+        } />
+      </div>
+    </div>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-1 rounded hover:bg-[--bg-hover] transition-colors"
+      style={{ color: "var(--text-secondary)" }}
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function ToolbarButton({
+  label,
+  icon,
+}: {
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      className="p-1.5 rounded hover:bg-[--bg-hover] transition-colors"
+      style={{ color: "var(--text-muted)" }}
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+    </button>
+  );
+}
