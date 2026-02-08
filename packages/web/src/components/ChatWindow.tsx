@@ -156,8 +156,13 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   const dispatch = useAppDispatch();
   const [input, setInput] = useState("");
   const [skillVersion, setSkillVersion] = useState(0); // bump to re-sort skills
+  const [pendingImage, setPendingImage] = useState<{ file: File; preview: string } | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const sessionKey = state.selectedSessionKey;
 
@@ -253,22 +258,130 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     inputRef.current?.focus();
   }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || !sessionKey) return;
+  // Image upload helpers
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    const preview = URL.createObjectURL(file);
+    setPendingImage({ file, preview });
+    e.target.value = "";
+    inputRef.current?.focus();
+  }, []);
+
+  const clearPendingImage = useCallback(() => {
+    if (pendingImage) {
+      URL.revokeObjectURL(pendingImage.preview);
+      setPendingImage(null);
+    }
+  }, [pendingImage]);
+
+  const uploadImage = useCallback(async (file: File): Promise<string | null> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const token = localStorage.getItem("botschat_token");
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as { url: string };
+      return data.url;
+    } catch (err) {
+      dlog.error("Upload", `Image upload failed: ${err}`);
+      return null;
+    }
+  }, []);
+
+  // Drag & drop handlers
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) {
+      setDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = dropZoneRef.current?.getBoundingClientRect();
+    if (rect) {
+      const { clientX, clientY } = e;
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+        setDragOver(false);
+      }
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) {
+      const preview = URL.createObjectURL(file);
+      setPendingImage({ file, preview });
+      inputRef.current?.focus();
+    }
+  }, []);
+
+  // Paste handler for images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) {
+          const preview = URL.createObjectURL(file);
+          setPendingImage({ file, preview });
+        }
+        return;
+      }
+    }
+  }, []);
+
+  const handleSend = async () => {
+    if ((!input.trim() && !pendingImage) || !sessionKey) return;
 
     const trimmed = input.trim();
-    const isSkill = trimmed.startsWith("/");
-    dlog.info("Chat", `Send message${isSkill ? " (skill)" : ""}: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { sessionKey, isSkill });
+    const hasText = trimmed.length > 0;
+    const isSkill = hasText && trimmed.startsWith("/");
+    dlog.info("Chat", `Send message${isSkill ? " (skill)" : ""}${pendingImage ? " +image" : ""}: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { sessionKey, isSkill });
 
-    // Track skill usage
-    recordSkillUsage(trimmed);
-    setSkillVersion((v) => v + 1);
+    if (hasText) {
+      recordSkillUsage(trimmed);
+      setSkillVersion((v) => v + 1);
+    }
+
+    // Upload image if present
+    let mediaUrl: string | undefined;
+    if (pendingImage) {
+      setImageUploading(true);
+      const url = await uploadImage(pendingImage.file);
+      setImageUploading(false);
+      if (!url) return; // Upload failed
+      mediaUrl = url;
+      clearPendingImage();
+    }
 
     const msg: ChatMessage = {
       id: crypto.randomUUID(),
       sender: "user",
       text: trimmed,
       timestamp: Date.now(),
+      mediaUrl,
     };
 
     dispatch({ type: "ADD_MESSAGE", message: msg });
@@ -279,11 +392,11 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
       text: trimmed,
       userId: state.user?.id ?? "",
       messageId: msg.id,
+      ...(mediaUrl ? { mediaUrl } : {}),
     });
 
     setInput("");
 
-    // Scroll to bottom after sending
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     });
@@ -374,7 +487,32 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
+    <div
+      ref={dropZoneRef}
+      className="flex-1 flex flex-col min-w-0 relative"
+      style={{ background: "var(--bg-surface)" }}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {dragOver && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.4)", pointerEvents: "none" }}
+        >
+          <div className="flex flex-col items-center gap-3 p-8 rounded-lg" style={{ background: "var(--bg-surface)", border: "2px dashed var(--text-link)" }}>
+            <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-link)" }}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v13.5A1.5 1.5 0 003.75 21z" />
+            </svg>
+            <span className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
+              Drop image here
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Channel header */}
       <div
         className="flex items-center justify-between px-5"
@@ -484,6 +622,33 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
             background: "var(--bg-surface)",
           }}
         >
+          {/* Image preview */}
+          {pendingImage && (
+            <div className="px-3 pt-2 flex items-start gap-2">
+              <div className="relative">
+                <img
+                  src={pendingImage.preview}
+                  alt="Preview"
+                  className="max-w-[120px] max-h-[80px] rounded-md object-contain"
+                  style={{ border: "1px solid var(--border)" }}
+                />
+                <button
+                  onClick={clearPendingImage}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white opacity-80 hover:opacity-100 transition-opacity"
+                  style={{ background: "#e74c3c", fontSize: 11 }}
+                  title="Remove image"
+                >
+                  ✕
+                </button>
+              </div>
+              {imageUploading && (
+                <span className="text-caption" style={{ color: "var(--text-muted)" }}>
+                  Uploading…
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Textarea */}
           <textarea
             ref={inputRef}
@@ -495,6 +660,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
                 handleSend();
               }
             }}
+            onPaste={handlePaste}
             placeholder={
               state.openclawConnected
                 ? `Message #${channelName}`
@@ -509,33 +675,32 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
           {/* Bottom toolbar */}
           <div className="flex items-center justify-between px-3 pb-2">
             <div className="flex items-center gap-1">
-              {/* Quick actions */}
-              <ToolbarButton label="Format" icon={
+              {/* Image upload button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-1.5 rounded hover:bg-[--bg-hover] transition-colors"
+                style={{ color: "var(--text-muted)" }}
+                title="Upload image"
+                aria-label="Upload image"
+                disabled={!state.openclawConnected}
+              >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v13.5A1.5 1.5 0 003.75 21zm14.25-15.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
                 </svg>
-              } />
-              <ToolbarButton label="Emoji" icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
-                </svg>
-              } />
-              <ToolbarButton label="Mention" icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25" />
-                </svg>
-              } />
-              <ToolbarButton label="Attach" icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-                </svg>
-              } />
+              </button>
             </div>
 
             {/* Send button */}
             <button
               onClick={handleSend}
-              disabled={!input.trim() || !state.openclawConnected}
+              disabled={(!input.trim() && !pendingImage) || !state.openclawConnected}
               className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               style={{ background: "var(--bg-active)" }}
             >
@@ -661,21 +826,11 @@ function MessageRow({
           boxShadow: "var(--shadow-sm)",
         }}
       >
-        <ActionButton label="React" icon={
-          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
-          </svg>
-        } />
         <ActionButton label="Reply in thread" icon={
           <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
           </svg>
         } onClick={onOpenThread} />
-        <ActionButton label="More" icon={
-          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
-          </svg>
-        } />
       </div>
     </div>
   );
@@ -703,21 +858,3 @@ function ActionButton({
   );
 }
 
-function ToolbarButton({
-  label,
-  icon,
-}: {
-  label: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      className="p-1.5 rounded hover:bg-[--bg-hover] transition-colors"
-      style={{ color: "var(--text-muted)" }}
-      title={label}
-      aria-label={label}
-    >
-      {icon}
-    </button>
-  );
-}

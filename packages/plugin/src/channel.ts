@@ -358,7 +358,7 @@ async function handleCloudMessage(
 ): Promise<void> {
   switch (msg.type) {
     case "user.message": {
-      ctx.log?.info(`[${ctx.accountId}] Message from ${msg.userId}: ${msg.text.slice(0, 80)}`);
+      ctx.log?.info(`[${ctx.accountId}] Message from ${msg.userId}: ${msg.text.slice(0, 80)}${msg.mediaUrl ? " [+image]" : ""}`);
 
       try {
         const runtime = getBotsChatRuntime();
@@ -392,6 +392,8 @@ async function handleCloudMessage(
           // A2UI format instructions are injected via agentPrompt.messageToolHints
           // (inside the message tool docs in the system prompt) — no GroupSystemPrompt needed.
           ...(threadId ? { MessageThreadId: threadId, ReplyToId: threadId } : {}),
+          // Include image URL if the user sent an image
+          ...(msg.mediaUrl ? { MediaUrl: msg.mediaUrl, NumMedia: "1" } : {}),
         };
 
         // Finalize the context (normalizes fields, resolves agent route)
@@ -537,7 +539,19 @@ async function handleCloudMessage(
       break;
 
     case "user.media":
-      ctx.log?.info(`[${ctx.accountId}] Media from user in session ${msg.sessionKey}`);
+      ctx.log?.info(`[${ctx.accountId}] Media from user in session ${msg.sessionKey}: ${msg.mediaUrl}`);
+      // Handle as a user.message with mediaUrl so the agent can process the image
+      await handleCloudMessage(
+        {
+          type: "user.message",
+          sessionKey: msg.sessionKey,
+          text: "",
+          userId: msg.userId,
+          messageId: `media-${Date.now()}`,
+          mediaUrl: msg.mediaUrl,
+        },
+        ctx,
+      );
       break;
 
     case "config.request":

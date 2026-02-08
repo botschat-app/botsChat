@@ -10,6 +10,7 @@ import { jobs } from "./routes/jobs.js";
 import { models } from "./routes/models.js";
 import { pairing } from "./routes/pairing.js";
 import { sessions } from "./routes/sessions.js";
+import { upload } from "./routes/upload.js";
 
 // Re-export the Durable Object class so wrangler can find it
 export { ConnectionDO } from "./do/connection-do.js";
@@ -191,6 +192,25 @@ protectedApp.route("/channels/:channelId/tasks/:taskId/jobs", jobs);
 // Nested session routes under /api/channels/:channelId/sessions
 protectedApp.route("/channels/:channelId/sessions", sessions);
 protectedApp.route("/pairing-tokens", pairing);
+protectedApp.route("/upload", upload);
+
+// ---- Media serving route (public, no auth) ----
+app.get("/api/media/:userId/:filename", async (c) => {
+  const userId = c.req.param("userId");
+  const filename = c.req.param("filename");
+  const key = `media/${userId}/${filename}`;
+
+  const object = await c.env.MEDIA.get(key);
+  if (!object) {
+    return c.json({ error: "Not found" }, 404);
+  }
+
+  const headers = new Headers();
+  headers.set("Content-Type", object.httpMetadata?.contentType ?? "application/octet-stream");
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+
+  return new Response(object.body, { headers });
+});
 
 // ---- WebSocket upgrade routes (BEFORE protected middleware) ----
 

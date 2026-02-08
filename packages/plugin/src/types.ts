@@ -122,6 +122,7 @@ export type CloudInbound =
       text: string;
       userId: string;
       messageId: string;
+      mediaUrl?: string;
     }
   | {
       type: "user.media";

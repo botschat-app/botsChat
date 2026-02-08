@@ -204,13 +204,27 @@ export class ConnectionDO implements DurableObject {
         sessionKey: msg.sessionKey,
         threadId: msg.threadId,
         replyToId: msg.replyToId,
+        hasMedia: !!msg.mediaUrl,
       }));
+
+      // For agent.media, cache external images to R2 so they remain accessible
+      // even after the original URL expires (e.g. DALL-E temporary URLs).
+      let persistedMediaUrl = msg.mediaUrl as string | undefined;
+      if (msg.type === "agent.media" && persistedMediaUrl) {
+        const cachedUrl = await this.cacheExternalMedia(persistedMediaUrl);
+        if (cachedUrl) {
+          persistedMediaUrl = cachedUrl;
+          // Update the message object so browsers get the cached URL
+          msg.mediaUrl = cachedUrl;
+        }
+      }
+
       await this.persistMessage({
         sender: "agent",
         sessionKey: msg.sessionKey as string,
         threadId: (msg.threadId ?? msg.replyToId) as string | undefined,
         text: (msg.text ?? msg.caption ?? "") as string,
-        mediaUrl: msg.mediaUrl as string | undefined,
+        mediaUrl: persistedMediaUrl,
         a2ui: msg.jsonl as string | undefined,
       });
     }
@@ -295,12 +309,14 @@ export class ConnectionDO implements DurableObject {
         type: msg.type,
         sessionKey: msg.sessionKey,
         messageId: msg.messageId,
+        hasMedia: !!msg.mediaUrl,
       }));
       await this.persistMessage({
         id: msg.messageId as string | undefined,
         sender: "user",
         sessionKey: msg.sessionKey as string,
         text: (msg.text ?? "") as string,
+        mediaUrl: msg.mediaUrl as string | undefined,
       });
     }
 
@@ -445,6 +461,53 @@ export class ConnectionDO implements DurableObject {
           }
         }
       }
+    }
+  }
+
+  // ---- Media caching ----
+
+  /**
+   * Download an external image and cache it in R2. Returns the local
+   * API URL (e.g. /api/media/...) or null if caching fails.
+   * Skips URLs that are already local (/api/media/...).
+   */
+  private async cacheExternalMedia(url: string): Promise<string | null> {
+    // Skip already-cached URLs
+    if (url.startsWith("/api/media/") || url.startsWith("data:")) return null;
+
+    try {
+      const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
+
+      // Download the external image
+      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) {
+        console.error(`[DO] Failed to fetch external media: HTTP ${response.status} for ${url}`);
+        return null;
+      }
+
+      const contentType = response.headers.get("Content-Type") ?? "image/png";
+      // Determine extension from Content-Type
+      const extMap: Record<string, string> = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg",
+      };
+      const ext = extMap[contentType] ?? "png";
+      const key = `media/${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+
+      // Upload to R2
+      await this.env.MEDIA.put(key, response.body, {
+        httpMetadata: { contentType },
+      });
+
+      const localUrl = `/api/media/${key.replace("media/", "")}`;
+      console.log(`[DO] Cached external media to R2: ${url.slice(0, 80)} → ${localUrl}`);
+      return localUrl;
+    } catch (err) {
+      console.error(`[DO] Failed to cache external media: ${err}`);
+      return null;
     }
   }
 
