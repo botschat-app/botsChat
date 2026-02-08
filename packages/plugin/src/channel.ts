@@ -47,6 +47,8 @@ function readAgentModel(_agentId: string): string | undefined {
 // Connection registry — maps accountId → live WSS client
 // ---------------------------------------------------------------------------
 const cloudClients = new Map<string, BotsChatCloudClient>();
+/** Maps accountId → cloudUrl so handleCloudMessage can resolve relative URLs */
+const cloudUrls = new Map<string, string>();
 
 function getCloudClient(accountId: string): BotsChatCloudClient | undefined {
   return cloudClients.get(accountId);
@@ -205,11 +207,13 @@ export const botschatPlugin = {
       });
 
       cloudClients.set(accountId, client);
+      cloudUrls.set(accountId, account.cloudUrl);
       client.connect();
 
       ctx.abortSignal.addEventListener("abort", () => {
         client.disconnect();
         cloudClients.delete(accountId);
+        cloudUrls.delete(accountId);
       });
 
       return client;
@@ -392,8 +396,19 @@ async function handleCloudMessage(
           // A2UI format instructions are injected via agentPrompt.messageToolHints
           // (inside the message tool docs in the system prompt) — no GroupSystemPrompt needed.
           ...(threadId ? { MessageThreadId: threadId, ReplyToId: threadId } : {}),
-          // Include image URL if the user sent an image
-          ...(msg.mediaUrl ? { MediaUrl: msg.mediaUrl, NumMedia: "1" } : {}),
+          // Include image URL if the user sent an image.
+          // Resolve relative URLs (e.g. /api/media/...) to absolute using cloudUrl
+          // so OpenClaw can fetch the image from the BotsChat cloud.
+          ...(msg.mediaUrl ? (() => {
+            let resolvedUrl = msg.mediaUrl;
+            if (resolvedUrl.startsWith("/")) {
+              const baseUrl = cloudUrls.get(ctx.accountId);
+              if (baseUrl) {
+                resolvedUrl = baseUrl.replace(/\/$/, "") + resolvedUrl;
+              }
+            }
+            return { MediaUrl: resolvedUrl, NumMedia: "1" };
+          })() : {}),
         };
 
         // Finalize the context (normalizes fields, resolves agent route)

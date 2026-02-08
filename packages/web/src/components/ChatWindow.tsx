@@ -290,7 +290,11 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
         throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
       }
       const data = await res.json() as { url: string };
-      return data.url;
+      // Return absolute URL so OpenClaw on mini.local can fetch the image
+      const absoluteUrl = data.url.startsWith("/")
+        ? `${window.location.origin}${data.url}`
+        : data.url;
+      return absoluteUrl;
     } catch (err) {
       dlog.error("Upload", `Image upload failed: ${err}`);
       return null;

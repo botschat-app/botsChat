@@ -472,20 +472,45 @@ export class ConnectionDO implements DurableObject {
    * Skips URLs that are already local (/api/media/...).
    */
   private async cacheExternalMedia(url: string): Promise<string | null> {
-    // Skip already-cached URLs
+    // Skip already-cached URLs or data URIs
     if (url.startsWith("/api/media/") || url.startsWith("data:")) return null;
+    // Also skip URLs that point back to our own media endpoint (absolute form)
+    if (/\/api\/media\//.test(url)) return null;
+
+    console.log(`[DO] cacheExternalMedia: attempting to cache ${url.slice(0, 120)}`);
 
     try {
       const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
 
-      // Download the external image
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      // Download the external image — use arrayBuffer to avoid stream issues
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      let response: Response;
+      try {
+        response = await fetch(url, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
       if (!response.ok) {
-        console.error(`[DO] Failed to fetch external media: HTTP ${response.status} for ${url}`);
+        console.error(`[DO] cacheExternalMedia: HTTP ${response.status} for ${url.slice(0, 120)}`);
         return null;
       }
 
       const contentType = response.headers.get("Content-Type") ?? "image/png";
+      // Validate that the response is actually an image
+      if (!contentType.startsWith("image/")) {
+        console.warn(`[DO] cacheExternalMedia: unexpected Content-Type "${contentType}" for ${url.slice(0, 120)}`);
+        // Still try to cache it — some servers return wrong content types
+      }
+
+      // Read the body as ArrayBuffer for maximum compatibility with R2
+      const body = await response.arrayBuffer();
+      if (body.byteLength === 0) {
+        console.warn(`[DO] cacheExternalMedia: empty body for ${url.slice(0, 120)}`);
+        return null;
+      }
+
       // Determine extension from Content-Type
       const extMap: Record<string, string> = {
         "image/png": "png",
@@ -498,15 +523,15 @@ export class ConnectionDO implements DurableObject {
       const key = `media/${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
       // Upload to R2
-      await this.env.MEDIA.put(key, response.body, {
+      await this.env.MEDIA.put(key, body, {
         httpMetadata: { contentType },
       });
 
       const localUrl = `/api/media/${key.replace("media/", "")}`;
-      console.log(`[DO] Cached external media to R2: ${url.slice(0, 80)} → ${localUrl}`);
+      console.log(`[DO] cacheExternalMedia: OK ${url.slice(0, 80)} → ${localUrl} (${body.byteLength} bytes)`);
       return localUrl;
     } catch (err) {
-      console.error(`[DO] Failed to cache external media: ${err}`);
+      console.error(`[DO] cacheExternalMedia: FAILED for ${url.slice(0, 120)}: ${err}`);
       return null;
     }
   }
