@@ -8,6 +8,40 @@ A self-hosted chat interface for [OpenClaw](https://github.com/openclaw/openclaw
 
 BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw agents — organize conversations into **Channels**, schedule **Background Tasks**, and monitor **Job** executions. Everything runs on your own infrastructure; your API keys and data never leave your machine.
 
+## Key Features
+
+### Structured Conversation Management
+
+BotsChat organizes your conversations through a **Channel → Session → Thread** three-layer hierarchy, keeping complex agent interactions clean and navigable:
+
+- **Channel** — one workspace per agent (e.g. "#General", "#BotsChat"), listed in the left sidebar.
+- **Session** — multiple session tabs within each channel, so you can run parallel conversations without losing context.
+- **Thread** — branch off from any message to start a focused sub-conversation in the right panel, without cluttering the main chat.
+
+You can also **switch models on the fly** from the top-right selector, and trigger common **Skills** (like `/model`, `/help`, `/skills`) directly from the command bar at the bottom of the chat.
+
+![Conversation Structure — Channel, Session, and Thread](docs/thread.png)
+
+### Interactive Agent UI (A2UI)
+
+Instead of plain text walls, BotsChat renders agent responses as **interactive UI elements** — clickable buttons, radio groups, and selection cards. When an agent asks "What kind of project do you want to create?", you see styled option buttons you can click, not just text to read and retype. This makes multi-step workflows feel like a guided wizard rather than a raw chat.
+
+![Interactive UI — Agent responses rendered as buttons and selection cards](docs/a2ui.png)
+
+### Background Task Automation
+
+Schedule **cron-style background tasks** that run your agents on autopilot. Each task has its own prompt, schedule, model selection, and full execution history. You can view detailed job logs, re-run tasks on demand, and enable/disable them with a single toggle.
+
+![Background Task — Schedule, prompt, and execution history](docs/cron.png)
+
+### Built-in Debug Log
+
+A collapsible **Debug Log** panel at the bottom of the UI gives you real-time visibility into what's happening under the hood — WebSocket events, cron task loading, agent scan results, and more. Filter by log level (ALL, WS, WST, API, INF, WRN, ERR) to quickly diagnose issues without leaving the chat interface.
+
+![Debug Log — Real-time logs with level filtering](docs/debug.png)
+
+---
+
 ## Architecture
 
 ![BotsChat Architecture](docs/architecture.png)
