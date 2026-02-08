@@ -1,0 +1,11 @@
+{
+  "id": "botschat",
+  "name": "BotsChat",
+  "description": "Connect to BotsChat cloud chat platform",
+  "channels": ["botschat"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
