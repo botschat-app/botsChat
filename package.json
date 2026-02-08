@@ -1,0 +1,23 @@
+{
+  "name": "botschat",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:reset": "bash scripts/dev.sh reset",
+    "dev:api": "wrangler dev --config wrangler.toml",
+    "dev:web": "npm run dev -w packages/web",
+    "deploy": "wrangler deploy --config wrangler.toml",
+    "deploy:web": "npm run build -w packages/web && wrangler pages deploy packages/web/dist --project-name botschat",
+    "db:migrate": "wrangler d1 migrations apply botschat-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply botschat-db --remote",
+    "typecheck": "tsc --noEmit",
+    "build:plugin": "npm run build -w packages/plugin"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "wrangler": "^3.100.0"
+  }
+}

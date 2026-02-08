@@ -1,0 +1,40 @@
+name = "botschat-api"
+main = "packages/api/src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Static Assets (React SPA) ---
+[assets]
+directory = "packages/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# --- D1 Database ---
+[[d1_databases]]
+binding = "DB"
+database_name = "botschat-db"
+database_id = "aa8dc50d-c839-44c2-a019-5818f0487be4"
+migrations_dir = "migrations"
+
+# --- R2 Bucket ---
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "botschat-media"
+
+# --- Durable Objects ---
+[durable_objects]
+bindings = [
+  { name = "CONNECTION_DO", class_name = "ConnectionDO" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConnectionDO"]
+
+# --- Environment Variables ---
+[vars]
+ENVIRONMENT = "development"
+
+# --- Dev settings ---
+[dev]
+port = 8787
