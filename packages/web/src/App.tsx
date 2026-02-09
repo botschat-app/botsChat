@@ -17,6 +17,7 @@ import { ChatWindow } from "./components/ChatWindow";
 import { ThreadPanel } from "./components/ThreadPanel";
 import { JobList } from "./components/JobList";
 import { LoginPage } from "./components/LoginPage";
+import { OnboardingPage } from "./components/OnboardingPage";
 import { DebugLogPanel } from "./components/DebugLogPanel";
 import { CronSidebar } from "./components/CronSidebar";
 import { CronDetail } from "./components/CronDetail";
@@ -37,6 +38,17 @@ export default function App() {
   const handleWSMessageRef = useRef<(msg: WSMessage) => void>(() => {});
 
   const [showSettings, setShowSettings] = useState(false);
+
+  // Onboarding: show setup page for new users who haven't connected OpenClaw yet.
+  // Once dismissed (skip or connected), we remember it for this session.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => {
+    return localStorage.getItem("botschat_onboarding_dismissed") === "1";
+  });
+
+  const handleDismissOnboarding = useCallback(() => {
+    setOnboardingDismissed(true);
+    localStorage.setItem("botschat_onboarding_dismissed", "1");
+  }, []);
 
   // Theme state – default to system preference then dark
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -655,12 +667,39 @@ export default function App() {
     [state.jobs],
   );
 
+  // Auto-dismiss onboarding when OpenClaw connects
+  useEffect(() => {
+    if (state.openclawConnected && !onboardingDismissed) {
+      // Delay slightly so user sees the "Connected!" success state
+      const timer = setTimeout(() => {
+        handleDismissOnboarding();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [state.openclawConnected, onboardingDismissed, handleDismissOnboarding]);
+
   // ---- Render ----
   if (!state.user) {
     return (
       <AppStateContext.Provider value={state}>
         <AppDispatchContext.Provider value={dispatch}>
           <LoginPage />
+        </AppDispatchContext.Provider>
+      </AppStateContext.Provider>
+    );
+  }
+
+  // Show onboarding for new users: no channels loaded yet AND not dismissed
+  // Wait until channels have been fetched (they're loaded in the useEffect above)
+  // to avoid flashing onboarding for returning users.
+  const channelsLoaded = state.channels.length > 0;
+  const showOnboarding = !onboardingDismissed && !channelsLoaded && !state.openclawConnected;
+
+  if (showOnboarding) {
+    return (
+      <AppStateContext.Provider value={state}>
+        <AppDispatchContext.Provider value={dispatch}>
+          <OnboardingPage onSkip={handleDismissOnboarding} />
         </AppDispatchContext.Provider>
       </AppStateContext.Provider>
     );
