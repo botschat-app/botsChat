@@ -54,11 +54,11 @@ do_build_web() {
 do_start() {
   kill_port 8787
   info "Starting wrangler dev on 0.0.0.0:8787…"
-  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0
+  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0 --var ENVIRONMENT:development
 }
 
 do_sync_plugin() {
-  local REMOTE="YinTong@mini.local"
+  local REMOTE="mini.local"
   local REMOTE_DIR="~/Projects/botsChat/packages/plugin"
 
   info "Syncing plugin to $REMOTE…"
@@ -66,20 +66,20 @@ do_sync_plugin() {
     packages/plugin/ "$REMOTE:$REMOTE_DIR/"
   ok "Plugin files synced"
 
-  info "Building plugin + restarting gateway on mini.local…"
-  ssh "$REMOTE" "$(cat <<'REMOTE_SCRIPT'
-export PATH="/opt/homebrew/bin:$PATH"
+  info "Building plugin, deploying to extensions, restarting gateway on mini.local…"
+  ssh "$REMOTE" 'export PATH="/opt/homebrew/bin:$PATH"
 cd ~/Projects/botsChat/packages/plugin
 npm run build
-echo "--- Plugin build OK ---"
+EXT_DIR=~/.openclaw/extensions/botschat
+rsync -av --delete dist/ "$EXT_DIR/dist/"
+rsync -av bin/ "$EXT_DIR/bin/" 2>/dev/null || true
+cp -f package.json openclaw.plugin.json "$EXT_DIR/" 2>/dev/null || true
+echo "--- Deployed to $EXT_DIR ---"
 pkill -9 -f openclaw-gateway 2>/dev/null || true
 sleep 3
-nohup openclaw gateway run --bind loopback --port 18789 --force \
-  > /tmp/openclaw-gateway.log 2>&1 &
-echo "Gateway restarted (PID=$!)"
-REMOTE_SCRIPT
-)"
-  ok "Plugin synced and gateway restarted"
+nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &
+echo "Gateway restarted (PID=$!)"'
+  ok "Plugin synced, deployed to extensions, gateway restarted"
 
   sleep 4
   info "Checking connection…"
@@ -88,7 +88,7 @@ REMOTE_SCRIPT
 
 do_logs() {
   info "Tailing gateway logs on mini.local…"
-  ssh YinTong@mini.local 'tail -f /tmp/openclaw-gateway.log'
+  ssh mini.local 'tail -f /tmp/openclaw-gateway.log'
 }
 
 # ── Main ─────────────────────────────────────────────────────────────
