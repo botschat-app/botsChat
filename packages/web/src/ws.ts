@@ -31,6 +31,8 @@ export class BotsChatWSClient {
   connect(): void {
     this.intentionalClose = false;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Token is NOT included in the URL to avoid leaking it in logs/history.
+    // Authentication is handled via the "auth" message after connection.
     const url = `${protocol}//${window.location.host}/api/ws/${this.opts.userId}/${this.opts.sessionId}`;
 
     dlog.info("WS", `Connecting to ${url}`);

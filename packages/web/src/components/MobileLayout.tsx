@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { useAppState, useAppDispatch, type ActiveView } from "../store";
-import { setToken } from "../api";
+import { setToken, setRefreshToken } from "../api";
 import type { WSMessage } from "../ws";
 import { Sidebar } from "./Sidebar";
 import { ChatWindow } from "./ChatWindow";
@@ -9,6 +9,7 @@ import { JobList } from "./JobList";
 import { CronSidebar } from "./CronSidebar";
 import { CronDetail } from "./CronDetail";
 import { ModelSelect } from "./ModelSelect";
+import { ConnectionSettings } from "./ConnectionSettings";
 import { dlog } from "../debug-log";
 
 type MobileScreen =
@@ -48,6 +49,8 @@ export function MobileLayout({
     if (state.selectedAgentId && state.selectedSessionKey) return "chat";
     return "channel-list";
   });
+
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const activeTab = state.activeView;
 
@@ -104,8 +107,13 @@ export function MobileLayout({
   const handleLogout = () => {
     dlog.info("Auth", `Mobile logout — user ${state.user?.email}`);
     setToken(null);
+    setRefreshToken(null);
     dispatch({ type: "LOGOUT" });
   };
+
+  const userInitial = state.user?.displayName?.[0]?.toUpperCase()
+    ?? state.user?.email?.[0]?.toUpperCase()
+    ?? "?";
 
   const goBack = useCallback(() => {
     switch (screen) {
@@ -201,8 +209,69 @@ export function MobileLayout({
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+          {/* User avatar */}
+          <button
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold text-white"
+            style={{ background: "#9B59B6" }}
+            title={state.user?.displayName ?? state.user?.email ?? "User"}
+          >
+            {userInitial}
+          </button>
         </div>
       </div>
+
+      {/* ---- User menu dropdown ---- */}
+      {showUserMenu && (
+        <div className="fixed inset-0 z-50" onClick={() => setShowUserMenu(false)}>
+          <div
+            className="absolute right-4 rounded-lg py-1 min-w-[200px]"
+            style={{
+              top: `calc(44px + env(safe-area-inset-top, 0px) + 4px)`,
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
+              <div className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
+                {state.user?.displayName ?? "User"}
+              </div>
+              <div className="text-caption" style={{ color: "var(--text-muted)" }}>
+                {state.user?.email}
+              </div>
+            </div>
+            <button
+              className="w-full text-left px-4 py-2.5 text-body flex items-center gap-2.5"
+              style={{ color: "var(--text-primary)" }}
+              onClick={() => { onToggleTheme(); setShowUserMenu(false); }}
+            >
+              {theme === "dark" ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+                </svg>
+              )}
+              {theme === "dark" ? "Light Mode" : "Dark Mode"}
+            </button>
+            <div style={{ borderTop: "1px solid var(--border)" }} />
+            <button
+              className="w-full text-left px-4 py-2.5 text-body flex items-center gap-2.5"
+              style={{ color: "var(--accent-red)" }}
+              onClick={() => { handleLogout(); setShowUserMenu(false); }}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+              </svg>
+              Logout
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ---- Screen content ---- */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -267,54 +336,80 @@ export function MobileLayout({
             </svg>
           }
         />
-        <TabButton
-          label={theme === "dark" ? "Light" : "Dark"}
-          active={false}
-          onClick={onToggleTheme}
-          icon={
-            theme === "dark" ? (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
-              </svg>
-            )
-          }
-        />
-        <TabButton
-          label="Logout"
-          active={false}
-          onClick={handleLogout}
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-            </svg>
-          }
-        />
       </div>
 
       {/* Settings modal */}
       {showSettings && (
-        <div
-          className="fixed inset-0 flex items-end justify-center z-50"
-          style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={onCloseSettings}
-        >
-          <div
-            className="w-full rounded-t-xl p-5 max-h-[80vh] overflow-y-auto"
-            style={{
-              background: "var(--bg-surface)",
-              paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "var(--text-muted)" }} />
-            <h2 className="text-h1 font-bold mb-4" style={{ color: "var(--text-primary)" }}>
-              Settings
-            </h2>
+        <MobileSettingsModal
+          state={state}
+          onClose={onCloseSettings}
+          handleDefaultModelChange={handleDefaultModelChange}
+        />
+      )}
+    </div>
+  );
+}
 
+/** Mobile Settings modal — extracted to keep layout clean */
+function MobileSettingsModal({
+  state,
+  onClose,
+  handleDefaultModelChange,
+}: {
+  state: ReturnType<typeof useAppState>;
+  onClose: () => void;
+  handleDefaultModelChange: (modelId: string) => Promise<void>;
+}) {
+  const [tab, setTab] = useState<"general" | "connection">("general");
+
+  return (
+    <div
+      className="fixed inset-0 flex items-end justify-center z-50"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full rounded-t-xl p-5 max-h-[85vh] flex flex-col"
+        style={{
+          background: "var(--bg-surface)",
+          paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: "var(--text-muted)" }} />
+        <h2 className="text-h1 font-bold mb-3" style={{ color: "var(--text-primary)" }}>
+          Settings
+        </h2>
+
+        {/* Tab bar */}
+        <div className="flex gap-4 mb-4" style={{ borderBottom: "1px solid var(--border)" }}>
+          <button
+            className="pb-2 text-caption font-bold transition-colors"
+            style={{
+              color: tab === "general" ? "var(--text-primary)" : "var(--text-muted)",
+              borderBottom: tab === "general" ? "2px solid var(--bg-active)" : "2px solid transparent",
+              marginBottom: "-1px",
+            }}
+            onClick={() => setTab("general")}
+          >
+            General
+          </button>
+          <button
+            className="pb-2 text-caption font-bold transition-colors"
+            style={{
+              color: tab === "connection" ? "var(--text-primary)" : "var(--text-muted)",
+              borderBottom: tab === "connection" ? "2px solid var(--bg-active)" : "2px solid transparent",
+              marginBottom: "-1px",
+            }}
+            onClick={() => setTab("connection")}
+          >
+            Connection
+          </button>
+        </div>
+
+        {/* Tab content — scrollable */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {tab === "general" && (
             <div className="space-y-4">
               <div>
                 <label className="block text-caption font-bold mb-1.5" style={{ color: "var(--text-secondary)" }}>
@@ -340,17 +435,21 @@ export function MobileLayout({
                 </span>
               </div>
             </div>
+          )}
 
-            <button
-              onClick={onCloseSettings}
-              className="w-full mt-5 py-2.5 text-caption font-bold text-white rounded-md"
-              style={{ background: "var(--bg-active)" }}
-            >
-              Done
-            </button>
-          </div>
+          {tab === "connection" && (
+            <ConnectionSettings />
+          )}
         </div>
-      )}
+
+        <button
+          onClick={onClose}
+          className="w-full mt-4 py-2.5 text-caption font-bold text-white rounded-md shrink-0"
+          style={{ background: "var(--bg-active)" }}
+        >
+          Done
+        </button>
+      </div>
     </div>
   );
 }

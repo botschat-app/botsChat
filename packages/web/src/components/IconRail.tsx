@@ -1,6 +1,6 @@
 import React from "react";
 import { useAppState, useAppDispatch, type ActiveView } from "../store";
-import { setToken } from "../api";
+import { setToken, setRefreshToken } from "../api";
 import { dlog } from "../debug-log";
 
 type IconRailProps = {
@@ -12,10 +12,12 @@ type IconRailProps = {
 export function IconRail({ onToggleTheme, onOpenSettings, theme }: IconRailProps) {
   const state = useAppState();
   const dispatch = useAppDispatch();
+  const [showUserMenu, setShowUserMenu] = React.useState(false);
 
   const handleLogout = () => {
     dlog.info("Auth", `Logout — user ${state.user?.email}`);
     setToken(null);
+    setRefreshToken(null);
     dispatch({ type: "LOGOUT" });
   };
 
@@ -35,11 +37,10 @@ export function IconRail({ onToggleTheme, onOpenSettings, theme }: IconRailProps
     >
       {/* Workspace icon */}
       <button
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs hover:rounded-xl transition-all"
-        style={{ background: "#1264A3" }}
+        className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden hover:rounded-xl transition-all"
         title="BotsChat"
       >
-        BC
+        <img src="/botschat-logo.png" alt="BotsChat" className="w-8 h-8" />
       </button>
 
       <div className="w-7 border-t my-1" style={{ borderColor: "var(--sidebar-divider)" }} />
@@ -112,15 +113,54 @@ export function IconRail({ onToggleTheme, onOpenSettings, theme }: IconRailProps
         }
       />
 
-      {/* User avatar */}
-      <button
-        onClick={handleLogout}
-        className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold text-white mt-1"
-        style={{ background: "#9B59B6" }}
-        title={`${state.user?.displayName ?? state.user?.email} (click to logout)`}
-      >
-        {userInitial}
-      </button>
+      {/* User avatar + popover menu */}
+      <div className="relative">
+        <button
+          onClick={() => setShowUserMenu(!showUserMenu)}
+          className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold text-white mt-1 cursor-pointer"
+          style={{ background: "#9B59B6" }}
+          title={state.user?.displayName ?? state.user?.email ?? "User"}
+        >
+          {userInitial}
+        </button>
+
+        {showUserMenu && (
+          <div className="fixed inset-0 z-50" onClick={() => setShowUserMenu(false)}>
+            <div
+              className="absolute rounded-lg py-1 min-w-[200px]"
+              style={{
+                bottom: 12,
+                left: 56,
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border)",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
+                <div className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
+                  {state.user?.displayName ?? "User"}
+                </div>
+                <div className="text-caption" style={{ color: "var(--text-muted)" }}>
+                  {state.user?.email}
+                </div>
+              </div>
+              <button
+                className="w-full text-left px-4 py-2.5 text-body flex items-center gap-2.5"
+                style={{ color: "var(--accent-red)" }}
+                onClick={() => { handleLogout(); setShowUserMenu(false); }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--sidebar-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+                </svg>
+                Logout
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import {
   type AppState,
   type ActiveView,
 } from "./store";
-import { getToken, setToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
+import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
 import { BotsChatWSClient, type WSMessage } from "./ws";
 import { IconRail } from "./components/IconRail";
@@ -19,6 +19,7 @@ import { ThreadPanel } from "./components/ThreadPanel";
 import { JobList } from "./components/JobList";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingPage } from "./components/OnboardingPage";
+import { ConnectionSettings } from "./components/ConnectionSettings";
 import { DebugLogPanel } from "./components/DebugLogPanel";
 import { CronSidebar } from "./components/CronSidebar";
 import { CronDetail } from "./components/CronDetail";
@@ -43,6 +44,10 @@ export default function App() {
   const creatingGeneralRef = useRef(false);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"general" | "connection">("general");
+
+  // Track whether the initial channels fetch has completed (prevents onboarding flash)
+  const [channelsLoadedOnce, setChannelsLoadedOnce] = useState(false);
 
   // Responsive layout hooks (must be called unconditionally)
   const isMobile = useIsMobile();
@@ -118,6 +123,7 @@ export default function App() {
         .catch((err) => {
           dlog.warn("Auth", `Auto-login failed: ${err}`);
           setToken(null);
+          setRefreshToken(null);
         });
     }
   }, []);
@@ -167,6 +173,7 @@ export default function App() {
       channelsApi.list().then(({ channels }) => {
         dlog.info("Channels", `Loaded ${channels.length} channels`, channels.map((c) => ({ id: c.id, name: c.name })));
         dispatch({ type: "SET_CHANNELS", channels });
+        setChannelsLoadedOnce(true);
       });
     }
   }, [state.user]);
@@ -276,9 +283,10 @@ export default function App() {
       }).catch((err) => {
         dlog.error("Sessions", `Failed to load sessions: ${err}`);
       });
-    } else if (agent?.isDefault && !creatingGeneralRef.current) {
+    } else if (agent?.isDefault && !creatingGeneralRef.current && onboardingDismissed) {
       // Default agent has no channelId yet — auto-create the "General" channel
       // (which also creates "Session 1") so the user sees a chat immediately.
+      // Gated by onboardingDismissed to avoid flashing the onboarding page away.
       dlog.info("Sessions", "Default agent has no channel — auto-creating General channel");
       creatingGeneralRef.current = true;
       dispatch({ type: "SET_TASKS", tasks: [] });
@@ -316,7 +324,7 @@ export default function App() {
       dispatch({ type: "SELECT_TASK", taskId: null });
       dispatch({ type: "SET_SESSIONS", sessions: [] });
     }
-  }, [state.selectedAgentId, selectedAgentChannelId, isMessagesView]);
+  }, [state.selectedAgentId, selectedAgentChannelId, isMessagesView, onboardingDismissed]);
 
   // ---- Load jobs when a background task is selected ----
   useEffect(() => {
@@ -737,11 +745,10 @@ export default function App() {
     );
   }
 
-  // Show onboarding for new users: no channels loaded yet AND not dismissed
-  // Wait until channels have been fetched (they're loaded in the useEffect above)
-  // to avoid flashing onboarding for returning users.
-  const channelsLoaded = state.channels.length > 0;
-  const showOnboarding = !onboardingDismissed && !channelsLoaded && !state.openclawConnected;
+  // Show onboarding for new users: channels have been fetched (first API call completed)
+  // and none exist. This prevents flashing onboarding for returning users whose
+  // channel list simply hasn't loaded yet.
+  const showOnboarding = !onboardingDismissed && channelsLoadedOnce && state.channels.length === 0 && !state.openclawConnected;
 
   if (showOnboarding) {
     return (
@@ -890,11 +897,11 @@ export default function App() {
             onClick={() => setShowSettings(false)}
           >
             <div
-              className="rounded-lg p-6 w-[420px] max-w-[90vw]"
+              className="rounded-lg p-6 w-[540px] max-w-[90vw] max-h-[85vh] flex flex-col"
               style={{ background: "var(--bg-surface)", boxShadow: "var(--shadow-lg)" }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center justify-between mb-4">
                 <h2 className="text-h1 font-bold" style={{ color: "var(--text-primary)" }}>
                   Settings
                 </h2>
@@ -909,46 +916,81 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-5">
-                {/* Default Model */}
-                <div>
-                  <label
-                    className="block text-caption font-bold mb-1.5"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    Default Model
-                  </label>
-                  <ModelSelect
-                    value={state.defaultModel ?? ""}
-                    onChange={handleDefaultModelChange}
-                    models={state.models}
-                    placeholder="Not set (use agent default)"
-                  />
-                  <p className="text-tiny mt-1.5" style={{ color: "var(--text-muted)" }}>
-                    Default model for new conversations. You can override per session using{" "}
-                    <code>/model</code> or per automation in its settings.
-                  </p>
-                </div>
+              {/* Tab bar */}
+              <div className="flex gap-4 mb-4" style={{ borderBottom: "1px solid var(--border)" }}>
+                <button
+                  className="pb-2 text-caption font-bold transition-colors"
+                  style={{
+                    color: settingsTab === "general" ? "var(--text-primary)" : "var(--text-muted)",
+                    borderBottom: settingsTab === "general" ? "2px solid var(--bg-active)" : "2px solid transparent",
+                    marginBottom: "-1px",
+                  }}
+                  onClick={() => setSettingsTab("general")}
+                >
+                  General
+                </button>
+                <button
+                  className="pb-2 text-caption font-bold transition-colors"
+                  style={{
+                    color: settingsTab === "connection" ? "var(--text-primary)" : "var(--text-muted)",
+                    borderBottom: settingsTab === "connection" ? "2px solid var(--bg-active)" : "2px solid transparent",
+                    marginBottom: "-1px",
+                  }}
+                  onClick={() => setSettingsTab("connection")}
+                >
+                  Connection
+                </button>
+              </div>
 
-                {/* Connection info */}
-                <div>
-                  <label
-                    className="block text-caption font-bold mb-1.5"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    Current Session Model
-                  </label>
-                  <span
-                    className="text-body font-mono"
-                    style={{ color: (state.sessionModel || state.defaultModel) ? "var(--text-primary)" : "var(--text-muted)" }}
-                  >
-                    {state.sessionModel ?? state.defaultModel ?? "Not connected"}
-                  </span>
-                </div>
+              {/* Tab content — scrollable */}
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                {settingsTab === "general" && (
+                  <div className="space-y-5">
+                    {/* Default Model */}
+                    <div>
+                      <label
+                        className="block text-caption font-bold mb-1.5"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        Default Model
+                      </label>
+                      <ModelSelect
+                        value={state.defaultModel ?? ""}
+                        onChange={handleDefaultModelChange}
+                        models={state.models}
+                        placeholder="Not set (use agent default)"
+                      />
+                      <p className="text-tiny mt-1.5" style={{ color: "var(--text-muted)" }}>
+                        Default model for new conversations. You can override per session using{" "}
+                        <code>/model</code> or per automation in its settings.
+                      </p>
+                    </div>
+
+                    {/* Current Session Model */}
+                    <div>
+                      <label
+                        className="block text-caption font-bold mb-1.5"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        Current Session Model
+                      </label>
+                      <span
+                        className="text-body font-mono"
+                        style={{ color: (state.sessionModel || state.defaultModel) ? "var(--text-primary)" : "var(--text-muted)" }}
+                      >
+                        {state.sessionModel ?? state.defaultModel ?? "Not connected"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === "connection" && (
+                  <ConnectionSettings />
+                )}
               </div>
 
               <div
-                className="mt-6 pt-4 flex justify-end"
+                className="mt-4 pt-4 flex justify-end"
                 style={{ borderTop: "1px solid var(--border)" }}
               >
                 <button

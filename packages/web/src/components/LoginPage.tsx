@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { authApi, setToken } from "../api";
+import React, { useState, useEffect } from "react";
+import { authApi, setToken, setRefreshToken } from "../api";
+import type { AuthConfig } from "../api";
 import { useAppDispatch } from "../store";
 import { dlog } from "../debug-log";
 import { isFirebaseConfigured, signInWithGoogle, signInWithGitHub } from "../firebase";
@@ -34,12 +35,24 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
   const firebaseEnabled = isFirebaseConfigured();
   const anyLoading = loading || !!oauthLoading;
 
-  const handleAuthSuccess = (res: { id: string; email: string; displayName?: string; token: string }) => {
+  // Fetch server-side auth config to determine which methods are available
+  useEffect(() => {
+    authApi.config().then(setAuthConfig).catch(() => {
+      // Fallback: assume email enabled (local dev) if config endpoint fails
+      setAuthConfig({ emailEnabled: true, googleEnabled: firebaseEnabled, githubEnabled: firebaseEnabled });
+    });
+  }, [firebaseEnabled]);
+
+  const emailEnabled = authConfig?.emailEnabled ?? true;
+
+  const handleAuthSuccess = (res: { id: string; email: string; displayName?: string; token: string; refreshToken?: string }) => {
     setToken(res.token);
+    if (res.refreshToken) setRefreshToken(res.refreshToken);
     dispatch({
       type: "SET_USER",
       user: { id: res.id, email: res.email, displayName: res.displayName },
@@ -130,7 +143,9 @@ export function LoginPage() {
           }}
         >
           <h2 className="text-h1 mb-6" style={{ color: "var(--text-primary)" }}>
-            {isRegister ? "Create account" : "Sign in"}
+            {emailEnabled
+              ? (isRegister ? "Create account" : "Sign in")
+              : "Sign in"}
           </h2>
 
           {/* OAuth buttons */}
@@ -182,113 +197,121 @@ export function LoginPage() {
                 </button>
               </div>
 
-              {/* Divider */}
-              <div className="flex items-center gap-3 my-5">
-                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
-                <span className="text-caption" style={{ color: "var(--text-muted)" }}>
-                  or
-                </span>
-                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
-              </div>
+              {/* Divider — only show if email login is also available */}
+              {emailEnabled && (
+                <div className="flex items-center gap-3 my-5">
+                  <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                  <span className="text-caption" style={{ color: "var(--text-muted)" }}>
+                    or
+                  </span>
+                  <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                </div>
+              )}
             </>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {isRegister && (
-              <div>
-                <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
-                  Display Name
-                </label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
-                  style={{
-                    background: "var(--bg-surface)",
-                    color: "var(--text-primary)",
-                    border: "1px solid var(--border)",
+          {/* Error display (always visible, e.g. OAuth errors) */}
+          {error && (
+            <div
+              className="text-caption px-3 py-2 rounded-sm mt-4"
+              style={{ background: "rgba(224,30,90,0.1)", color: "var(--accent-red)" }}
+            >
+              {error}
+            </div>
+          )}
+
+          {/* Email/password form — only in local/dev mode */}
+          {emailEnabled && (
+            <>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {isRegister && (
+                  <div>
+                    <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
+                      Display Name
+                    </label>
+                    <input
+                      type="text"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
+                      style={{
+                        background: "var(--bg-surface)",
+                        color: "var(--text-primary)",
+                        border: "1px solid var(--border)",
+                      }}
+                      placeholder="Your name"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
+                    style={{
+                      background: "var(--bg-surface)",
+                      color: "var(--text-primary)",
+                      border: "1px solid var(--border)",
+                    }}
+                    placeholder="you@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
+                    style={{
+                      background: "var(--bg-surface)",
+                      color: "var(--text-primary)",
+                      border: "1px solid var(--border)",
+                    }}
+                    placeholder="Enter password"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={anyLoading}
+                  className="w-full py-2.5 font-bold text-body text-white rounded-sm disabled:opacity-50 transition-colors hover:brightness-110"
+                  style={{ background: "var(--bg-active)" }}
+                >
+                  {loading
+                    ? "..."
+                    : isRegister
+                      ? "Create account"
+                      : "Sign in with email"}
+                </button>
+              </form>
+
+              <div className="mt-6 text-center">
+                <button
+                  onClick={() => {
+                    setIsRegister(!isRegister);
+                    setError("");
                   }}
-                  placeholder="Your name"
-                />
+                  className="text-caption hover:underline"
+                  style={{ color: "var(--text-link)" }}
+                >
+                  {isRegister
+                    ? "Already have an account? Sign in"
+                    : "Don't have an account? Register"}
+                </button>
               </div>
-            )}
-
-            <div>
-              <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
-                style={{
-                  background: "var(--bg-surface)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border)",
-                }}
-                placeholder="you@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="block text-caption font-bold mb-1" style={{ color: "var(--text-secondary)" }}>
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-3 py-2.5 text-body rounded-sm focus:outline-none placeholder:text-[--text-muted]"
-                style={{
-                  background: "var(--bg-surface)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border)",
-                }}
-                placeholder="Enter password"
-              />
-            </div>
-
-            {error && (
-              <div
-                className="text-caption px-3 py-2 rounded-sm"
-                style={{ background: "rgba(224,30,90,0.1)", color: "var(--accent-red)" }}
-              >
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={anyLoading}
-              className="w-full py-2.5 font-bold text-body text-white rounded-sm disabled:opacity-50 transition-colors hover:brightness-110"
-              style={{ background: "var(--bg-active)" }}
-            >
-              {loading
-                ? "..."
-                : isRegister
-                  ? "Create account"
-                  : "Sign in with email"}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => {
-                setIsRegister(!isRegister);
-                setError("");
-              }}
-              className="text-caption hover:underline"
-              style={{ color: "var(--text-link)" }}
-            >
-              {isRegister
-                ? "Already have an account? Sign in"
-                : "Don't have an account? Register"}
-            </button>
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>
