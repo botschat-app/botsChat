@@ -85,9 +85,17 @@ npm install
 
 ### Step 2: Deploy BotsChat Server
 
-Choose one of the two options below:
+Choose one of the three options below:
 
-#### Option A: Run Locally
+#### Option A: Use Hosted Console (Recommended)
+
+The easiest way to get started — no deployment needed. We run a hosted BotsChat instance at **[console.botschat.app](https://console.botschat.app)**. Just sign up, generate a pairing token, and connect your OpenClaw instance directly.
+
+Your API keys and data still stay on your machine — the hosted console only relays chat messages via WebSocket, exactly the same as a self-hosted deployment.
+
+> Skip to [Step 3](#step-3-install-the-openclaw-plugin) after signing up.
+
+#### Option B: Run Locally
 
 Wrangler uses [Miniflare](https://miniflare.dev) under the hood, so D1, R2, and Durable Objects all run locally — **no Cloudflare account needed**.
 
@@ -116,7 +124,7 @@ Other dev commands:
 ./scripts/dev.sh logs      # Tail remote gateway logs
 ```
 
-#### Option B: Deploy to Cloudflare
+#### Option C: Deploy to Cloudflare
 
 For remote access (e.g. chatting with your agents from your phone), deploy to Cloudflare Workers. The free tier is more than enough for personal use.
 
@@ -156,6 +164,7 @@ Open the BotsChat web UI, register an account, and generate a **pairing token** 
 **3. Configure the connection**
 
 ```bash
+# For hosted console, use https://console.botschat.app
 # For local deployment, use http://localhost:8787 or your LAN IP
 # For Cloudflare deployment, use your Workers URL
 openclaw config set channels.botschat.cloudUrl <BOTSCHAT_URL>

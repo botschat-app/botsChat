@@ -68,6 +68,9 @@ export const authApi = {
     request<AuthResponse>("POST", "/auth/register", { email, password, displayName }),
   login: (email: string, password: string) =>
     request<AuthResponse>("POST", "/auth/login", { email, password }),
+  /** Sign in with any Firebase provider (Google, GitHub, etc.) */
+  firebase: (idToken: string) =>
+    request<AuthResponse>("POST", "/auth/firebase", { idToken }),
   me: () => request<{ id: string; email: string; displayName: string | null; settings: UserSettings }>("GET", "/me"),
 };
 
@@ -239,4 +242,13 @@ export const pairingApi = {
   create: (label?: string) =>
     request<{ id: string; token: string; label: string | null }>("POST", "/pairing-tokens", { label }),
   delete: (id: string) => request<{ ok: boolean }>("DELETE", `/pairing-tokens/${id}`),
+};
+
+export const setupApi = {
+  /** Get the recommended cloudUrl from the backend (smart resolution). */
+  cloudUrl: () =>
+    request<{ cloudUrl: string; isLoopback: boolean; hint?: string }>(
+      "GET",
+      "/setup/cloud-url",
+    ),
 };
