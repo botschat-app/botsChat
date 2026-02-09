@@ -51,18 +51,30 @@ setup.post("/init", async (c) => {
 
     // Find or create user
     let row = await c.env.DB.prepare(
-      "SELECT id, display_name FROM users WHERE firebase_uid = ?",
-    ).bind(firebaseUid).first<{ id: string; display_name: string | null }>();
+      "SELECT id, display_name, password_hash FROM users WHERE firebase_uid = ?",
+    ).bind(firebaseUid).first<{ id: string; display_name: string | null; password_hash: string }>();
 
     if (!row) {
-      row = await c.env.DB.prepare(
-        "SELECT id, display_name FROM users WHERE email = ?",
-      ).bind(email).first<{ id: string; display_name: string | null }>();
+      const existing = await c.env.DB.prepare(
+        "SELECT id, display_name, password_hash FROM users WHERE email = ?",
+      ).bind(email).first<{ id: string; display_name: string | null; password_hash: string }>();
 
-      if (row) {
+      if (existing) {
+        if (existing.password_hash) {
+          // SECURITY: refuse auto-link to password-protected account
+          return c.json(
+            {
+              error: "An account with this email already exists. Use email+password instead.",
+              code: "EMAIL_EXISTS_WITH_PASSWORD",
+            },
+            409,
+          );
+        }
+        // OAuth-only account — safe to link
         await c.env.DB.prepare(
           "UPDATE users SET firebase_uid = ?, updated_at = unixepoch() WHERE id = ?",
-        ).bind(firebaseUid, row.id).run();
+        ).bind(firebaseUid, existing.id).run();
+        row = existing;
       }
     }
 
@@ -75,7 +87,7 @@ setup.post("/init", async (c) => {
         `INSERT INTO users (id, email, password_hash, display_name, auth_provider, firebase_uid)
          VALUES (?, ?, '', ?, ?, ?)`,
       ).bind(id, email, displayName ?? email.split("@")[0], authProvider, firebaseUid).run();
-      row = { id, display_name: displayName };
+      row = { id, display_name: displayName, password_hash: "" };
     }
 
     userId = row.id;

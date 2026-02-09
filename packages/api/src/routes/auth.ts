@@ -120,26 +120,41 @@ async function handleFirebaseAuth(c: {
 
   // 2. Look up existing user by firebase_uid first, then by email
   let row = await c.env.DB.prepare(
-    "SELECT id, email, display_name, auth_provider FROM users WHERE firebase_uid = ?",
+    "SELECT id, email, display_name, auth_provider, password_hash FROM users WHERE firebase_uid = ?",
   )
     .bind(firebaseUid)
-    .first<{ id: string; email: string; display_name: string | null; auth_provider: string }>();
+    .first<{ id: string; email: string; display_name: string | null; auth_provider: string; password_hash: string }>();
 
   if (!row) {
-    // Check if there's an existing email-based account — link it
-    row = await c.env.DB.prepare(
-      "SELECT id, email, display_name, auth_provider FROM users WHERE email = ?",
+    // Check if there's an existing account with the same email
+    const existing = await c.env.DB.prepare(
+      "SELECT id, email, display_name, auth_provider, password_hash FROM users WHERE email = ?",
     )
       .bind(email)
-      .first<{ id: string; email: string; display_name: string | null; auth_provider: string }>();
+      .first<{ id: string; email: string; display_name: string | null; auth_provider: string; password_hash: string }>();
 
-    if (row) {
-      // Link Firebase UID to existing account
+    if (existing) {
+      if (existing.password_hash) {
+        // SECURITY: existing account has a password — do NOT auto-link.
+        // The user must sign in with their password first, or the admin
+        // must link accounts manually.  Auto-linking would let an
+        // attacker who pre-registered the email access the real owner's
+        // data once they sign in with OAuth.
+        return c.json(
+          {
+            error: "An account with this email already exists. Please sign in with your email and password.",
+            code: "EMAIL_EXISTS_WITH_PASSWORD",
+          },
+          409,
+        );
+      }
+      // Existing account was created via OAuth (no password) — safe to link
       await c.env.DB.prepare(
         "UPDATE users SET firebase_uid = ?, auth_provider = ?, updated_at = unixepoch() WHERE id = ?",
       )
-        .bind(firebaseUid, authProvider, row.id)
+        .bind(firebaseUid, authProvider, existing.id)
         .run();
+      row = existing;
     }
   }
 
@@ -153,17 +168,17 @@ async function handleFirebaseAuth(c: {
       .bind(id, email, displayName, authProvider, firebaseUid)
       .run();
 
-    row = { id, email, display_name: displayName, auth_provider: authProvider };
+    row = { id, email, display_name: displayName, auth_provider: authProvider, password_hash: "" };
   }
 
   // 4. Issue our own JWT
   const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
-  const token = await createToken(row.id, secret);
+  const token = await createToken(row!.id, secret);
 
   return c.json({
-    id: row.id,
-    email: row.email,
-    displayName: row.display_name,
+    id: row!.id,
+    email: row!.email,
+    displayName: row!.display_name,
     token,
   });
 }
