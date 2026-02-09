@@ -27,6 +27,7 @@ import { ResizeHandle } from "./components/ResizeHandle";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { MobileLayout } from "./components/MobileLayout";
 import { dlog } from "./debug-log";
+import { gtagPageView } from "./analytics";
 
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState, (init): AppState => {
@@ -83,6 +84,11 @@ export default function App() {
   // Persist active view (messages / automations)
   useEffect(() => {
     localStorage.setItem("botschat_active_view", state.activeView);
+  }, [state.activeView]);
+
+  // Google Analytics: track virtual page views for SPA tabs
+  useEffect(() => {
+    gtagPageView(state.activeView);
   }, [state.activeView]);
 
   // Persist selected cron task for automations view
