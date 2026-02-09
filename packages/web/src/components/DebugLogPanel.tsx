@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { getLogEntries, subscribeLog, clearLog, type LogEntry, type LogLevel } from "../debug-log";
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -25,6 +25,11 @@ function formatTs(ts: number): string {
     "." + String(d.getMilliseconds()).padStart(3, "0");
 }
 
+const STORAGE_KEY = "botschat_debug_panel_height";
+const DEFAULT_HEIGHT = 220;
+const MIN_HEIGHT = 80;
+const MAX_HEIGHT = 600;
+
 export function DebugLogPanel() {
   const entries = useSyncExternalStore(subscribeLog, getLogEntries);
   const [open, setOpen] = useState(false);
@@ -32,6 +37,85 @@ export function DebugLogPanel() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
+
+  // Persisted panel height
+  const [height, setHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const n = parseInt(saved, 10);
+        if (n >= MIN_HEIGHT && n <= MAX_HEIGHT) return n;
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_HEIGHT;
+  });
+
+  // Drag-to-resize state
+  const draggingRef = useRef(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(DEFAULT_HEIGHT);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    draggingRef.current = true;
+    startYRef.current = e.clientY;
+    startHeightRef.current = height;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return;
+      // Dragging up → increases height (clientY decreases)
+      const delta = startYRef.current - ev.clientY;
+      const newH = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeightRef.current + delta));
+      setHeight(newH);
+    };
+
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      // Persist
+      setHeight((h) => {
+        try { localStorage.setItem(STORAGE_KEY, String(h)); } catch { /* ignore */ }
+        return h;
+      });
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [height]);
+
+  // Touch support for mobile
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    draggingRef.current = true;
+    startYRef.current = touch.clientY;
+    startHeightRef.current = height;
+
+    const onMove = (ev: TouchEvent) => {
+      if (!draggingRef.current) return;
+      const t = ev.touches[0];
+      const delta = startYRef.current - t.clientY;
+      const newH = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeightRef.current + delta));
+      setHeight(newH);
+    };
+
+    const onEnd = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      setHeight((h) => {
+        try { localStorage.setItem(STORAGE_KEY, String(h)); } catch { /* ignore */ }
+        return h;
+      });
+    };
+
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+  }, [height]);
 
   // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
@@ -67,6 +151,35 @@ export function DebugLogPanel() {
         lineHeight: 1.5,
       }}
     >
+      {/* Drag handle — visible only when panel is open */}
+      {open && (
+        <div
+          onMouseDown={handleResizeStart}
+          onTouchStart={handleTouchStart}
+          className="resize-handle group"
+          style={{
+            height: 6,
+            cursor: "row-resize",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--bg-secondary)",
+            borderTop: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            className="resize-handle-line"
+            style={{
+              width: "100%",
+              height: 1,
+              background: "var(--border)",
+              transition: "height 150ms, background 150ms",
+            }}
+          />
+        </div>
+      )}
+
       {/* Toggle bar */}
       <div
         onClick={() => setOpen(!open)}
@@ -76,7 +189,7 @@ export function DebugLogPanel() {
           gap: 8,
           padding: "3px 12px",
           background: "var(--bg-secondary)",
-          borderTop: "1px solid var(--border)",
+          borderTop: open ? undefined : "1px solid var(--border)",
           cursor: "pointer",
           userSelect: "none",
         }}
@@ -143,7 +256,7 @@ export function DebugLogPanel() {
           ref={scrollRef}
           onScroll={handleScroll}
           style={{
-            height: 220,
+            height,
             overflowY: "auto",
             overflowX: "hidden",
             background: "var(--bg-primary)",

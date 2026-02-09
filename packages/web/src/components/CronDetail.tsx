@@ -1,10 +1,13 @@
 import React, { useEffect, useCallback, useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useAppState, useAppDispatch } from "../store";
 import { jobsApi, tasksApi } from "../api";
 import { ModelSelect } from "./ModelSelect";
 import { ScheduleEditor, ScheduleDisplay } from "./ScheduleEditor";
+import { ResizeHandle } from "./ResizeHandle";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { dlog } from "../debug-log";
 
 function relativeTime(ts: number): string {
@@ -49,6 +52,7 @@ function statusColors(status: string): { bg: string; fg: string } {
 export function CronDetail() {
   const state = useAppState();
   const dispatch = useAppDispatch();
+  const isMobile = useIsMobile();
 
   const task = state.cronTasks.find((t) => t.id === state.selectedCronTaskId);
 
@@ -332,12 +336,12 @@ export function CronDetail() {
     <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
       {/* ---- Header ---- */}
       <div
-        className="flex items-center justify-between px-5 py-3"
+        className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2 sm:py-3"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           <svg
-            className="w-5 h-5 flex-shrink-0"
+            className="w-5 h-5 flex-shrink-0 hidden sm:block"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -348,18 +352,18 @@ export function CronDetail() {
           </svg>
 
           {editingField === "name" ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <input
                 ref={editRef as React.RefObject<HTMLInputElement>}
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="text-h2 font-bold px-2 py-0.5 rounded-sm focus:outline-none"
+                className="text-h2 font-bold px-2 py-0.5 rounded-sm focus:outline-none min-w-0 w-full"
                 style={{
                   background: "var(--bg-hover)",
                   color: "var(--text-primary)",
                   border: "1px solid var(--bg-active)",
-                  minWidth: 200,
+                  maxWidth: 280,
                 }}
               />
               <SaveCancelButtons saving={saving} onSave={saveEdit} onCancel={cancelEdit} />
@@ -385,12 +389,12 @@ export function CronDetail() {
           )}
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           {/* Run Now button */}
           <button
             onClick={handleRunNow}
             disabled={running}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-caption rounded-sm transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 text-caption rounded-sm transition-colors disabled:opacity-50"
             style={{
               background: "rgba(29,155,209,0.15)",
               color: "var(--text-link)",
@@ -400,13 +404,13 @@ export function CronDetail() {
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
-            {running ? "Running..." : "Run Now"}
+            <span className="hidden sm:inline">{running ? "Running..." : "Run Now"}</span>
           </button>
 
           {/* Delete button */}
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="p-1.5 rounded-sm transition-colors hover:bg-[--bg-hover]"
+            className="p-1 sm:p-1.5 rounded-sm transition-colors hover:bg-[--bg-hover]"
             style={{ color: "var(--text-muted)" }}
             title="Delete task"
           >
@@ -418,14 +422,14 @@ export function CronDetail() {
           {/* Enable/Disable toggle */}
           <button
             onClick={handleToggleEnabled}
-            className="flex items-center gap-2 px-3 py-1.5 text-caption rounded-sm transition-colors"
+            className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 text-caption rounded-sm transition-colors"
             style={{
               background: task.enabled ? "rgba(43,172,118,0.15)" : "rgba(107,111,118,0.15)",
               color: task.enabled ? "var(--accent-green)" : "var(--text-muted)",
             }}
           >
             <div
-              className="w-7 h-4 rounded-full relative transition-colors"
+              className="w-7 h-4 rounded-full relative transition-colors flex-shrink-0"
               style={{ background: task.enabled ? "var(--accent-green)" : "var(--text-muted)" }}
             >
               <div
@@ -433,7 +437,7 @@ export function CronDetail() {
                 style={{ left: task.enabled ? 14 : 2 }}
               />
             </div>
-            {task.enabled ? "Enabled" : "Disabled"}
+            <span className="hidden sm:inline">{task.enabled ? "Enabled" : "Disabled"}</span>
           </button>
         </div>
       </div>
@@ -441,15 +445,15 @@ export function CronDetail() {
       {/* ---- Delete confirmation ---- */}
       {showDeleteConfirm && (
         <div
-          className="px-5 py-3 flex items-center justify-between"
+          className="px-4 sm:px-5 py-2 sm:py-3 flex flex-wrap items-center justify-between gap-2"
           style={{ background: "rgba(224,30,90,0.08)", borderBottom: "1px solid var(--border)" }}
         >
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "var(--accent-red)" }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "var(--accent-red)" }}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
             </svg>
             <span className="text-caption" style={{ color: "var(--accent-red)" }}>
-              Delete "{task.name}"? This will remove the task, all execution history, and the OpenClaw cron job.
+              Delete "{task.name}"?
             </span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -472,247 +476,407 @@ export function CronDetail() {
         </div>
       )}
 
-      {/* ---- Info section (collapsible) ---- */}
-      <div style={{ borderBottom: "1px solid var(--border)" }}>
-        <button
-          className="w-full flex items-center gap-2 px-5 py-2 text-tiny uppercase tracking-wider hover:bg-[--bg-hover] transition-colors"
-          style={{ color: "var(--text-muted)" }}
-          onClick={() => setInfoExpanded(!infoExpanded)}
+      {/* ---- Info section + Content area: vertically resizable on desktop, stacked on mobile ---- */}
+      <CronInfoAndContent
+        task={task}
+        channel={channel}
+        state={state}
+        isMobile={isMobile}
+        infoExpanded={infoExpanded}
+        setInfoExpanded={setInfoExpanded}
+        editingField={editingField}
+        editValue={editValue}
+        setEditValue={setEditValue}
+        editRef={editRef}
+        handleKeyDown={handleKeyDown}
+        saving={saving}
+        saveEdit={saveEdit}
+        cancelEdit={cancelEdit}
+        startEdit={startEdit}
+        handleModelSelectChange={handleModelSelectChange}
+        handleSelectJob={handleSelectJob}
+      />
+    </div>
+  );
+}
+
+// ---- Info section + Content area (vertical resizable split) ----
+
+function CronInfoAndContent({
+  task,
+  channel,
+  state,
+  isMobile,
+  infoExpanded,
+  setInfoExpanded,
+  editingField,
+  editValue,
+  setEditValue,
+  editRef,
+  handleKeyDown,
+  saving,
+  saveEdit,
+  cancelEdit,
+  startEdit,
+  handleModelSelectChange,
+  handleSelectJob,
+}: {
+  task: any;
+  channel: any;
+  state: any;
+  isMobile: boolean;
+  infoExpanded: boolean;
+  setInfoExpanded: (v: boolean) => void;
+  editingField: "name" | "schedule" | "instructions" | null;
+  editValue: string;
+  setEditValue: (v: string) => void;
+  editRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+  handleKeyDown: (e: React.KeyboardEvent) => void;
+  saving: boolean;
+  saveEdit: () => void;
+  cancelEdit: () => void;
+  startEdit: (field: "name" | "schedule" | "instructions") => void;
+  handleModelSelectChange: (modelId: string) => Promise<void>;
+  handleSelectJob: (jobId: string) => void;
+}) {
+  const cronDetailVertLayout = useDefaultLayout({ id: "botschat-cron-detail-v" });
+
+  // Shared info section content
+  const infoSection = (
+    <div className="h-full flex flex-col">
+      <button
+        className="w-full flex items-center gap-2 px-4 sm:px-5 py-2 text-tiny uppercase tracking-wider hover:bg-[--bg-hover] transition-colors flex-shrink-0"
+        style={{ color: "var(--text-muted)" }}
+        onClick={() => setInfoExpanded(!infoExpanded)}
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${infoExpanded ? "rotate-0" : "-rotate-90"}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
         >
-          <svg
-            className={`w-3 h-3 transition-transform ${infoExpanded ? "rotate-0" : "-rotate-90"}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-          Task Details
-        </button>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+        Task Details
+      </button>
 
-        {infoExpanded && (
-          <div className="px-5 pb-4 space-y-4">
-            {/* Row 1: Schedule (wider) + Model + Channel + Status */}
-            {editingField === "schedule" ? (
-              /* Schedule editing takes full width */
-              <div>
-                <InfoField label="Schedule">
-                  <ScheduleEditor
-                    value={editValue}
-                    onChange={setEditValue}
-                    onSave={saveEdit}
-                    onCancel={cancelEdit}
-                    saving={saving}
-                  />
-                </InfoField>
-              </div>
-            ) : (
-              <div className="grid grid-cols-4 gap-4">
-                <InfoField label="Schedule">
-                  <ScheduleDisplay
-                    schedule={task.schedule}
-                    onClick={() => startEdit("schedule")}
-                  />
-                </InfoField>
-
-                <InfoField label="Model">
-                  <ModelSelect
-                    value={task.model ?? ""}
-                    onChange={handleModelSelectChange}
-                    models={state.models}
-                    placeholder="Default"
-                  />
-                </InfoField>
-
-                <InfoField label="Channel">
-                  <span className="text-body" style={{ color: "var(--text-primary)" }}>
-                    {channel?.name ?? "Default"}
-                  </span>
-                </InfoField>
-
-                <InfoField label="Status">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ background: task.enabled ? "var(--accent-green)" : "var(--accent-yellow)" }}
-                    />
-                    <span className="text-body" style={{ color: "var(--text-primary)" }}>
-                      {task.enabled ? "Active" : "Paused"}
-                    </span>
-                  </div>
-                </InfoField>
-              </div>
-            )}
-
-            {/* Row 2: Cron Job ID + Created + Updated */}
-            <div className="grid grid-cols-3 gap-4">
-              <InfoField label="Cron Job ID">
-                <span className="text-caption font-mono" style={{ color: "var(--text-secondary)" }}>
-                  {task.openclawCronJobId ?? "N/A"}
-                </span>
-              </InfoField>
-
-              <InfoField label="Created">
-                <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
-                  {task.createdAt ? formatTimestamp(task.createdAt) : "N/A"}
-                </span>
-              </InfoField>
-
-              <InfoField label="Updated">
-                <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
-                  {task.updatedAt ? formatTimestamp(task.updatedAt) : "N/A"}
-                </span>
-              </InfoField>
-            </div>
-
-            {/* Row 3: Prompt / Instructions (full width) */}
+      {infoExpanded && (
+        <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-4 space-y-4">
+          {/* Row 1: Schedule (wider) + Model + Channel + Status */}
+          {editingField === "schedule" ? (
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-tiny uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                  Prompt / Instructions
-                </span>
-                {editingField !== "instructions" && (
-                  <button
-                    onClick={() => startEdit("instructions")}
-                    className="text-tiny px-2 py-0.5 rounded-sm transition-colors hover:bg-[--bg-hover]"
-                    style={{ color: "var(--text-link)" }}
-                  >
-                    Edit
-                  </button>
-                )}
-              </div>
-
-              {editingField === "instructions" ? (
-                <div>
-                  <textarea
-                    ref={editRef as React.RefObject<HTMLTextAreaElement>}
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") cancelEdit();
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        saveEdit();
-                      }
-                    }}
-                    placeholder="Enter the prompt or instructions for this cron task..."
-                    rows={6}
-                    className="w-full text-caption p-3 rounded-md resize-y focus:outline-none"
-                    style={{
-                      background: "var(--bg-hover)",
-                      color: "var(--text-primary)",
-                      border: "1px solid var(--bg-active)",
-                      minHeight: 80,
-                      maxHeight: 300,
-                    }}
-                  />
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-tiny" style={{ color: "var(--text-muted)" }}>
-                      Cmd/Ctrl+Enter to save, Esc to cancel
-                    </span>
-                    <SaveCancelButtons saving={saving} onSave={saveEdit} onCancel={cancelEdit} />
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="text-caption p-3 rounded-md whitespace-pre-wrap cursor-pointer hover:border-[--text-muted] transition-colors"
-                  style={{
-                    background: "var(--bg-hover)",
-                    color: task.instructions ? "var(--text-primary)" : "var(--text-muted)",
-                    border: "1px solid transparent",
-                    minHeight: 48,
-                  }}
-                  onClick={() => startEdit("instructions")}
-                  title="Click to edit"
-                >
-                  {task.instructions || "No instructions set. Click to add a prompt for this cron task."}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ---- Content area: job history + chat ---- */}
-      <div className="flex-1 flex min-h-0">
-        {/* Job list panel */}
-        <div
-          className="overflow-y-auto flex-shrink-0"
-          style={{
-            width: 220,
-            borderRight: "1px solid var(--border)",
-          }}
-        >
-          <div className="px-3 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
-            <span className="text-tiny uppercase tracking-wider font-bold" style={{ color: "var(--text-muted)" }}>
-              Execution History
-            </span>
-            <span className="text-tiny ml-1" style={{ color: "var(--text-muted)" }}>
-              ({state.cronJobs.length})
-            </span>
-          </div>
-          {state.cronJobs.length === 0 ? (
-            <div className="px-4 py-6 text-center">
-              <p className="text-tiny" style={{ color: "var(--text-muted)" }}>
-                No runs yet.
-              </p>
-              <p className="text-tiny mt-1" style={{ color: "var(--text-muted)" }}>
-                Waiting for schedule...
-              </p>
+              <InfoField label="Schedule">
+                <ScheduleEditor
+                  value={editValue}
+                  onChange={setEditValue}
+                  onSave={saveEdit}
+                  onCancel={cancelEdit}
+                  saving={saving}
+                />
+              </InfoField>
             </div>
           ) : (
-            state.cronJobs.map((job, idx) => {
-              const colors = statusColors(job.status);
-              const displayNum = job.number || state.cronJobs.length - idx;
-              const isSelected = state.selectedCronJobId === job.id;
-              return (
-                <button
-                  key={job.id}
-                  onClick={() => handleSelectJob(job.id)}
-                  className={`w-full text-left px-3 py-2 hover:bg-[--bg-hover] transition-colors ${
-                    isSelected ? "bg-[--bg-hover]" : ""
-                  }`}
-                  style={{
-                    borderBottom: "1px solid var(--border)",
-                    ...(isSelected ? { borderLeft: "3px solid var(--bg-active)" } : {}),
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-tiny font-mono" style={{ color: "var(--text-muted)" }}>
-                      #{displayNum}
-                    </span>
-                    <span
-                      className="text-tiny px-1.5 py-0.5 rounded-sm font-bold flex items-center gap-1"
-                      style={{ background: colors.bg, color: colors.fg }}
-                    >
-                      {job.status === "running" && (
-                        <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--text-link)" }} />
-                      )}
-                      {statusLabel(job.status)}
-                    </span>
-                  </div>
-                  <div className="text-tiny mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {job.time}
-                    {job.durationMs != null && (
-                      <span className="ml-1">({(job.durationMs / 1000).toFixed(1)}s)</span>
-                    )}
-                  </div>
-                  {job.summary && (
-                    <div className="text-caption mt-1 truncate" style={{ color: "var(--text-secondary)" }}>
-                      {job.summary}
-                    </div>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+              <InfoField label="Schedule">
+                <ScheduleDisplay
+                  schedule={task.schedule}
+                  onClick={() => startEdit("schedule")}
+                />
+              </InfoField>
 
-        {/* Job output detail */}
-        <JobOutputPanel jobs={state.cronJobs} selectedJobId={state.selectedCronJobId} />
-      </div>
+              <InfoField label="Model">
+                <ModelSelect
+                  value={task.model ?? ""}
+                  onChange={handleModelSelectChange}
+                  models={state.models}
+                  placeholder="Default"
+                />
+              </InfoField>
+
+              <InfoField label="Channel">
+                <span className="text-body" style={{ color: "var(--text-primary)" }}>
+                  {channel?.name ?? "Default"}
+                </span>
+              </InfoField>
+
+              <InfoField label="Status">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: task.enabled ? "var(--accent-green)" : "var(--accent-yellow)" }}
+                  />
+                  <span className="text-body" style={{ color: "var(--text-primary)" }}>
+                    {task.enabled ? "Active" : "Paused"}
+                  </span>
+                </div>
+              </InfoField>
+            </div>
+          )}
+
+          {/* Row 2: Cron Job ID + Created + Updated */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <InfoField label="Cron Job ID">
+              <span className="text-caption font-mono" style={{ color: "var(--text-secondary)" }}>
+                {task.openclawCronJobId ?? "N/A"}
+              </span>
+            </InfoField>
+
+            <InfoField label="Created">
+              <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
+                {task.createdAt ? formatTimestamp(task.createdAt) : "N/A"}
+              </span>
+            </InfoField>
+
+            <InfoField label="Updated">
+              <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
+                {task.updatedAt ? formatTimestamp(task.updatedAt) : "N/A"}
+              </span>
+            </InfoField>
+          </div>
+
+          {/* Row 3: Prompt / Instructions (full width) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-tiny uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                Prompt / Instructions
+              </span>
+              {editingField !== "instructions" && (
+                <button
+                  onClick={() => startEdit("instructions")}
+                  className="text-tiny px-2 py-0.5 rounded-sm transition-colors hover:bg-[--bg-hover]"
+                  style={{ color: "var(--text-link)" }}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {editingField === "instructions" ? (
+              <div>
+                <textarea
+                  ref={editRef as React.RefObject<HTMLTextAreaElement>}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") cancelEdit();
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      saveEdit();
+                    }
+                  }}
+                  placeholder="Enter the prompt or instructions for this cron task..."
+                  rows={6}
+                  className="w-full text-caption p-3 rounded-md resize-y focus:outline-none"
+                  style={{
+                    background: "var(--bg-hover)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--bg-active)",
+                    minHeight: 80,
+                    maxHeight: 300,
+                  }}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-tiny" style={{ color: "var(--text-muted)" }}>
+                    Cmd/Ctrl+Enter to save, Esc to cancel
+                  </span>
+                  <SaveCancelButtons saving={saving} onSave={saveEdit} onCancel={cancelEdit} />
+                </div>
+              </div>
+            ) : (
+              <div
+                className="text-caption p-3 rounded-md whitespace-pre-wrap cursor-pointer hover:border-[--text-muted] transition-colors"
+                style={{
+                  background: "var(--bg-hover)",
+                  color: task.instructions ? "var(--text-primary)" : "var(--text-muted)",
+                  border: "1px solid transparent",
+                  minHeight: 48,
+                }}
+                onClick={() => startEdit("instructions")}
+                title="Click to edit"
+              >
+                {task.instructions || "No instructions set. Click to add a prompt for this cron task."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+  );
+
+  // Mobile: simple vertical stack (no resize)
+  if (isMobile) {
+    return (
+      <>
+        <div style={{ borderBottom: "1px solid var(--border)" }}>{infoSection}</div>
+        <CronContentPanels cronJobs={state.cronJobs} selectedCronJobId={state.selectedCronJobId} handleSelectJob={handleSelectJob} mobile />
+      </>
+    );
+  }
+
+  // Desktop: vertical resizable split between info and content
+  return (
+    <Group
+      orientation="vertical"
+      defaultLayout={cronDetailVertLayout.defaultLayout}
+      onLayoutChanged={cronDetailVertLayout.onLayoutChanged}
+      id="botschat-cron-detail-v"
+      className="flex-1 min-h-0"
+    >
+      {/* Info section panel */}
+      <Panel id="cron-info" defaultSize="40%" minSize="5%" maxSize="70%">
+        <div className="h-full" style={{ borderBottom: "1px solid var(--border)" }}>
+          {infoSection}
+        </div>
+      </Panel>
+
+      <ResizeHandle direction="vertical" />
+
+      {/* Content area panel (job history + output) */}
+      <Panel id="cron-content-area">
+        <CronContentPanels cronJobs={state.cronJobs} selectedCronJobId={state.selectedCronJobId} handleSelectJob={handleSelectJob} mobile={false} />
+      </Panel>
+    </Group>
+  );
+}
+
+// ---- Cron content panels (split component for hook usage) ----
+
+function CronContentPanels({
+  cronJobs,
+  selectedCronJobId,
+  handleSelectJob,
+  mobile,
+}: {
+  cronJobs: Array<{ id: string; number: number; status: string; startedAt: number; finishedAt: number | null; durationMs: number | null; summary: string; time: string; sessionKey?: string }>;
+  selectedCronJobId: string | null;
+  handleSelectJob: (jobId: string) => void;
+  mobile: boolean;
+}) {
+  const cronLayout = useDefaultLayout({ id: "botschat-cron-content" });
+  const [mobileShowOutput, setMobileShowOutput] = useState(false);
+
+  // On mobile, tapping a job → show output; navigate back to list via header
+  const handleMobileSelectJob = (jobId: string) => {
+    handleSelectJob(jobId);
+    setMobileShowOutput(true);
+  };
+
+  // --- Shared job list content ---
+  const jobListContent = (
+    <div className="overflow-y-auto h-full">
+      <div className="px-3 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
+        <span className="text-tiny uppercase tracking-wider font-bold" style={{ color: "var(--text-muted)" }}>
+          Execution History
+        </span>
+        <span className="text-tiny ml-1" style={{ color: "var(--text-muted)" }}>
+          ({cronJobs.length})
+        </span>
+      </div>
+      {cronJobs.length === 0 ? (
+        <div className="px-4 py-6 text-center">
+          <p className="text-tiny" style={{ color: "var(--text-muted)" }}>
+            No runs yet.
+          </p>
+          <p className="text-tiny mt-1" style={{ color: "var(--text-muted)" }}>
+            Waiting for schedule...
+          </p>
+        </div>
+      ) : (
+        cronJobs.map((job, idx) => {
+          const colors = statusColors(job.status);
+          const displayNum = job.number || cronJobs.length - idx;
+          const isSelected = selectedCronJobId === job.id;
+          return (
+            <button
+              key={job.id}
+              onClick={() => mobile ? handleMobileSelectJob(job.id) : handleSelectJob(job.id)}
+              className={`w-full text-left px-3 py-2 hover:bg-[--bg-hover] transition-colors ${
+                isSelected ? "bg-[--bg-hover]" : ""
+              }`}
+              style={{
+                borderBottom: "1px solid var(--border)",
+                ...(isSelected ? { borderLeft: "3px solid var(--bg-active)" } : {}),
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-tiny font-mono" style={{ color: "var(--text-muted)" }}>
+                  #{displayNum}
+                </span>
+                <span
+                  className="text-tiny px-1.5 py-0.5 rounded-sm font-bold flex items-center gap-1"
+                  style={{ background: colors.bg, color: colors.fg }}
+                >
+                  {job.status === "running" && (
+                    <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--text-link)" }} />
+                  )}
+                  {statusLabel(job.status)}
+                </span>
+              </div>
+              <div className="text-tiny mt-0.5" style={{ color: "var(--text-muted)" }}>
+                {job.time}
+                {job.durationMs != null && (
+                  <span className="ml-1">({(job.durationMs / 1000).toFixed(1)}s)</span>
+                )}
+              </div>
+              {job.summary && (
+                <div className="text-caption mt-1 truncate" style={{ color: "var(--text-secondary)" }}>
+                  {job.summary}
+                </div>
+              )}
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+
+  // --- Mobile: stack-based navigation (list ↔ output) ---
+  if (mobile) {
+    if (mobileShowOutput && selectedCronJobId) {
+      return (
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Back to list */}
+          <button
+            onClick={() => setMobileShowOutput(false)}
+            className="flex items-center gap-1 px-4 py-2 text-caption flex-shrink-0"
+            style={{ borderBottom: "1px solid var(--border)", color: "var(--text-link)" }}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            Back to History
+          </button>
+          <div className="flex-1 min-h-0">
+            <JobOutputPanel jobs={cronJobs} selectedJobId={selectedCronJobId} />
+          </div>
+        </div>
+      );
+    }
+    return <div className="flex-1 min-h-0">{jobListContent}</div>;
+  }
+
+  // --- Desktop: resizable horizontal panels ---
+  return (
+    <Group
+      orientation="horizontal"
+      defaultLayout={cronLayout.defaultLayout}
+      onLayoutChanged={cronLayout.onLayoutChanged}
+      id="botschat-cron-content"
+      className="flex-1 min-h-0"
+    >
+      {/* Job list panel */}
+      <Panel id="cron-jobs" defaultSize="20%" minSize="12%" maxSize="40%">
+        {jobListContent}
+      </Panel>
+
+      <ResizeHandle />
+
+      {/* Job output detail */}
+      <Panel id="cron-output">
+        <JobOutputPanel jobs={cronJobs} selectedJobId={selectedCronJobId} />
+      </Panel>
+    </Group>
   );
 }
 

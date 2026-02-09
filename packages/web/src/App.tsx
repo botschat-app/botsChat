@@ -1,4 +1,5 @@
 import React, { useReducer, useEffect, useCallback, useRef, useState } from "react";
+import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import {
   appReducer,
   initialState,
@@ -21,6 +22,9 @@ import { OnboardingPage } from "./components/OnboardingPage";
 import { DebugLogPanel } from "./components/DebugLogPanel";
 import { CronSidebar } from "./components/CronSidebar";
 import { CronDetail } from "./components/CronDetail";
+import { ResizeHandle } from "./components/ResizeHandle";
+import { useIsMobile } from "./hooks/useIsMobile";
+import { MobileLayout } from "./components/MobileLayout";
 import { dlog } from "./debug-log";
 
 export default function App() {
@@ -36,8 +40,14 @@ export default function App() {
   });
   const wsClientRef = useRef<BotsChatWSClient | null>(null);
   const handleWSMessageRef = useRef<(msg: WSMessage) => void>(() => {});
+  const creatingGeneralRef = useRef(false);
 
   const [showSettings, setShowSettings] = useState(false);
+
+  // Responsive layout hooks (must be called unconditionally)
+  const isMobile = useIsMobile();
+  const mainLayout = useDefaultLayout({ id: "botschat-main" });
+  const contentLayout = useDefaultLayout({ id: "botschat-content" });
 
   // Onboarding: show setup page for new users who haven't connected OpenClaw yet.
   // Once dismissed (skip or connected), we remember it for this session.
@@ -263,6 +273,41 @@ export default function App() {
       }).catch((err) => {
         dlog.error("Sessions", `Failed to load sessions: ${err}`);
       });
+    } else if (agent?.isDefault && !creatingGeneralRef.current) {
+      // Default agent has no channelId yet — auto-create the "General" channel
+      // (which also creates "Session 1") so the user sees a chat immediately.
+      dlog.info("Sessions", "Default agent has no channel — auto-creating General channel");
+      creatingGeneralRef.current = true;
+      dispatch({ type: "SET_TASKS", tasks: [] });
+      dispatch({ type: "SELECT_TASK", taskId: null });
+      dispatch({ type: "SET_SESSIONS", sessions: [] });
+
+      channelsApi
+        .create({ name: "General", openclawAgentId: "main" })
+        .then(async (channel) => {
+          dlog.info("Sessions", `General channel created: ${channel.id}`);
+          // Reload agents and channels so the default agent picks up the new channelId
+          const [{ agents: freshAgents }, { channels: freshChannels }] = await Promise.all([
+            agentsApi.list(),
+            channelsApi.list(),
+          ]);
+          dispatch({ type: "SET_AGENTS", agents: freshAgents });
+          dispatch({ type: "SET_CHANNELS", channels: freshChannels });
+          // Channel creation auto-creates "Session 1" — load and select it
+          const { sessions: newSessions } = await sessionsApi.list(channel.id);
+          dispatch({ type: "SET_SESSIONS", sessions: newSessions });
+          if (newSessions.length > 0) {
+            dispatch({
+              type: "SELECT_SESSION",
+              sessionId: newSessions[0].id,
+              sessionKey: newSessions[0].sessionKey,
+            });
+          }
+        })
+        .catch((err) => {
+          dlog.error("Sessions", `Failed to auto-create General channel: ${err}`);
+          creatingGeneralRef.current = false;
+        });
     } else {
       dispatch({ type: "SET_TASKS", tasks: [] });
       dispatch({ type: "SELECT_TASK", taskId: null });
@@ -712,67 +757,122 @@ export default function App() {
 
   const isAutomationsView = state.activeView === "automations";
 
+  // ---- Mobile layout ----
+  if (isMobile) {
+    return (
+      <AppStateContext.Provider value={state}>
+        <AppDispatchContext.Provider value={dispatch}>
+          <MobileLayout
+            sendMessage={sendMessage}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            showSettings={showSettings}
+            onOpenSettings={() => setShowSettings(true)}
+            onCloseSettings={() => setShowSettings(false)}
+            handleDefaultModelChange={handleDefaultModelChange}
+            handleSelectJob={handleSelectJob}
+          />
+        </AppDispatchContext.Provider>
+      </AppStateContext.Provider>
+    );
+  }
+
+  // ---- Desktop layout with resizable panels ----
   return (
     <AppStateContext.Provider value={state}>
       <AppDispatchContext.Provider value={dispatch}>
         <div className="flex flex-col h-screen">
           <div className="flex flex-1 min-h-0">
-            {/* Icon Rail (68px fixed) */}
+            {/* Icon Rail — fixed 68px, outside Group */}
             <IconRail onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} theme={theme} />
 
-            {/* Sidebar (220px) — switches based on active view */}
-            {isAutomationsView ? <CronSidebar /> : <Sidebar />}
+            {/* Resizable panels: Sidebar + Content */}
+            <Group
+              orientation="horizontal"
+              defaultLayout={mainLayout.defaultLayout}
+              onLayoutChanged={mainLayout.onLayoutChanged}
+              id="botschat-main"
+              className="flex-1"
+            >
+              {/* Sidebar panel */}
+              <Panel id="sidebar" defaultSize="15%" minSize="8%" maxSize="30%">
+                {isAutomationsView ? <CronSidebar /> : <Sidebar />}
+              </Panel>
 
-            {/* Main content area (flex) */}
-            {isAutomationsView ? (
-              <CronDetail />
-            ) : (
-              <div className="flex-1 flex flex-col min-w-0">
-                {hasSession ? (
-                  <>
-                    <div className="flex-1 flex min-h-0">
-                      {isBackgroundTask && (
-                        <JobList
-                          jobs={state.jobs}
-                          selectedJobId={state.selectedJobId}
-                          onSelectJob={handleSelectJob}
-                        />
-                      )}
+              <ResizeHandle />
 
-                      <ChatWindow sendMessage={sendMessage} />
-
-                      {/* Detail Panel (right side, conditional) */}
-                      <ThreadPanel sendMessage={sendMessage} />
-                    </div>
-                  </>
+              {/* Main content panel */}
+              <Panel id="content">
+                {isAutomationsView ? (
+                  <CronDetail />
                 ) : (
-                  <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
-                    <div className="text-center">
-                      <svg
-                        className="w-20 h-20 mx-auto mb-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={1}
-                        style={{ color: "var(--text-muted)" }}
+                  <div className="flex-1 flex flex-col min-w-0 h-full">
+                    {hasSession ? (
+                      <Group
+                        orientation="horizontal"
+                        defaultLayout={contentLayout.defaultLayout}
+                        onLayoutChanged={contentLayout.onLayoutChanged}
+                        id="botschat-content"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                        />
-                      </svg>
-                      <p className="text-body font-bold" style={{ color: "var(--text-muted)" }}>
-                        Select a channel to get started
-                      </p>
-                      <p className="text-caption mt-1" style={{ color: "var(--text-muted)" }}>
-                        Choose a channel from the sidebar
-                      </p>
-                    </div>
+                        {/* JobList — conditional */}
+                        {isBackgroundTask && (
+                          <>
+                            <Panel id="joblist" defaultSize="15%" minSize="8%" maxSize="30%">
+                              <JobList
+                                jobs={state.jobs}
+                                selectedJobId={state.selectedJobId}
+                                onSelectJob={handleSelectJob}
+                              />
+                            </Panel>
+                            <ResizeHandle />
+                          </>
+                        )}
+
+                        {/* ChatWindow — main area */}
+                        <Panel id="chat">
+                          <ChatWindow sendMessage={sendMessage} />
+                        </Panel>
+
+                        {/* ThreadPanel — conditional */}
+                        {state.activeThreadId && (
+                          <>
+                            <ResizeHandle />
+                            <Panel id="thread" defaultSize="28%" minSize="18%" maxSize="50%">
+                              <ThreadPanel sendMessage={sendMessage} />
+                            </Panel>
+                          </>
+                        )}
+                      </Group>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
+                        <div className="text-center">
+                          <svg
+                            className="w-20 h-20 mx-auto mb-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={1}
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                            />
+                          </svg>
+                          <p className="text-body font-bold" style={{ color: "var(--text-muted)" }}>
+                            Select a channel to get started
+                          </p>
+                          <p className="text-caption mt-1" style={{ color: "var(--text-muted)" }}>
+                            Choose a channel from the sidebar
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
+              </Panel>
+            </Group>
           </div>
 
           {/* Global debug log panel — collapsible at bottom */}

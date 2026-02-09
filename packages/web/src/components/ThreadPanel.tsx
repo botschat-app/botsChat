@@ -71,15 +71,12 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
     <div
       className="flex flex-col h-full"
       style={{
-        width: 420,
-        minWidth: 320,
         background: "var(--bg-surface)",
-        borderLeft: "1px solid var(--border)",
       }}
     >
       {/* Header */}
       <div
-        className="flex items-center justify-between px-4"
+        className="flex items-center justify-between px-4 flex-shrink-0"
         style={{ height: 44, borderBottom: "1px solid var(--border)" }}
       >
         <h3 className="text-h1" style={{ color: "var(--text-primary)" }}>Thread</h3>
@@ -96,7 +93,7 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
       </div>
 
       {/* Scrollable area: parent message + replies */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {/* Parent message */}
         {parentMessage && (
           <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>

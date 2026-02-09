@@ -49,5 +49,8 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "wrangler": "^3.100.0"
+  },
+  "dependencies": {
+    "react-resizable-panels": "^4.6.2"
   }
 }

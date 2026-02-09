@@ -75,6 +75,12 @@
 }
 
 /* ========== Base styles ========== */
+html, body {
+  /* App manages its own scroll containers; root elements should not scroll */
+  overflow: hidden;
+  height: 100%;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -158,6 +164,22 @@ code:not(pre code) {
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+/* ========== Resize handles ========== */
+/* Active state (dragging) — react-resizable-panels v4 uses data-separator + data-state */
+[data-state="dragging"] .resize-handle-line,
+.resize-handle:hover .resize-handle-line {
+  background: var(--text-link) !important;
+}
+
+[data-state="dragging"] .resize-handle-line {
+  width: 3px !important;
+}
+
+/* Vertical handles */
+[data-state="dragging"].resize-handle .resize-handle-line[class*="h-"] {
+  height: 3px !important;
+}
+
 /* Focus visible */
 *:focus-visible {
   outline: 2px solid var(--bg-active);
@@ -167,4 +189,41 @@ code:not(pre code) {
 /* Transitions for theme switching */
 body, .theme-transition {
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+/* ========== Mobile-specific ========== */
+@media (max-width: 767px) {
+  /* Prevent iOS rubber-band bounce on main container */
+  html, body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Full-height on mobile (accounts for address bar) */
+  html {
+    height: -webkit-fill-available;
+  }
+
+  body {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Mobile screen transition */
+.mobile-screen-enter {
+  animation: slideInRight 0.2s ease-out;
+}
+
+.mobile-screen-exit {
+  animation: slideOutRight 0.2s ease-in;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(30%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideOutRight {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(30%); opacity: 0; }
 }

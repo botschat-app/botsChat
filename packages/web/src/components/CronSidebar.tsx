@@ -21,7 +21,7 @@ export function CronSidebar() {
   return (
     <div
       className="flex flex-col h-full"
-      style={{ width: 220, minWidth: 160, background: "var(--bg-secondary)", borderRight: "1px solid var(--border)" }}
+      style={{ background: "var(--bg-secondary)" }}
     >
       {/* Header */}
       <div className="px-4 py-3 flex items-center gap-2">

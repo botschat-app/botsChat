@@ -30,10 +30,8 @@ export function JobList({ jobs, selectedJobId, onSelectJob }: JobListProps) {
   if (jobs.length === 0) {
     return (
       <div
-        className="flex items-center justify-center"
+        className="flex items-center justify-center h-full"
         style={{
-          width: 192,
-          borderRight: "1px solid var(--border)",
           background: "var(--bg-surface)",
         }}
       >
@@ -60,10 +58,8 @@ export function JobList({ jobs, selectedJobId, onSelectJob }: JobListProps) {
 
   return (
     <div
-      className="overflow-y-auto"
+      className="overflow-y-auto h-full"
       style={{
-        width: 192,
-        borderRight: "1px solid var(--border)",
         background: "var(--bg-surface)",
       }}
     >
