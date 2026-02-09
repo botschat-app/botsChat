@@ -71,36 +71,42 @@ BotsChat introduces a few UI-level concepts that map to OpenClaw primitives:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 22+
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 - An [OpenClaw](https://github.com/openclaw/openclaw) instance
+- For self-hosting (Option B or C): [Node.js](https://nodejs.org/) 22+, [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
 
-### Step 1: Clone and Install
+### Choose Your Deployment
+
+BotsChat is **100% open source** — the [same code](https://github.com/botschat-app/botsChat) runs whether you use our hosted console, run it locally, or deploy to your own Cloudflare. The only difference is *where* the server runs; your API keys and data always stay on your machine.
+
+| Mode | Best for | Clone repo? |
+|------|----------|-------------|
+| **A. Hosted Console** | Zero setup, start in minutes | No |
+| **B. Run Locally** | Development, no cloud account | Yes |
+| **C. Deploy to Cloudflare** | Remote access (e.g. from phone) | Yes |
+
+Pick one below and follow its steps, then continue to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
+
+---
+
+#### Option A: Hosted Console (Recommended)
+
+We run the same open-source stack at **[console.botschat.app](https://console.botschat.app)**. No clone, no deploy: open the link → sign up → create a pairing token → connect OpenClaw.
+
+Your API keys and data still stay on your machine; the hosted console only relays chat messages via WebSocket.
+
+→ Then go to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
+
+---
+
+#### Option B: Run Locally
+
+Clone, install, and run the server on your machine. Wrangler uses [Miniflare](https://miniflare.dev), so D1, R2, and Durable Objects all run locally — **no Cloudflare account needed**.
 
 ```bash
 git clone https://github.com/botschat-app/botsChat.git
 cd botsChat
 npm install
-```
-
-### Step 2: Deploy BotsChat Server
-
-Choose one of the three options below:
-
-#### Option A: Use Hosted Console (Recommended)
-
-The easiest way to get started — no deployment needed. We run a hosted BotsChat instance at **[console.botschat.app](https://console.botschat.app)**. Just sign up, generate a pairing token, and connect your OpenClaw instance directly.
-
-Your API keys and data still stay on your machine — the hosted console only relays chat messages via WebSocket, exactly the same as a self-hosted deployment.
-
-> Skip to [Step 3](#step-3-install-the-openclaw-plugin) after signing up.
-
-#### Option B: Run Locally
-
-Wrangler uses [Miniflare](https://miniflare.dev) under the hood, so D1, R2, and Durable Objects all run locally — **no Cloudflare account needed**.
-
-```bash
-# One-command startup: build web → migrate D1 → start server on 0.0.0.0:8787
+# One-command startup: build web → migrate D1 → start on 0.0.0.0:8787
 ./scripts/dev.sh
 ```
 
@@ -124,11 +130,19 @@ Other dev commands:
 ./scripts/dev.sh logs      # Tail remote gateway logs
 ```
 
+→ Then go to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
+
+---
+
 #### Option C: Deploy to Cloudflare
 
-For remote access (e.g. chatting with your agents from your phone), deploy to Cloudflare Workers. The free tier is more than enough for personal use.
+For remote access (e.g. chatting from your phone), deploy the same code to Cloudflare Workers. The free tier is enough for personal use.
 
 ```bash
+git clone https://github.com/botschat-app/botsChat.git
+cd botsChat
+npm install
+
 # Create Cloudflare resources
 wrangler d1 create botschat-db          # Copy the database_id into wrangler.toml
 wrangler r2 bucket create botschat-media
@@ -147,7 +161,11 @@ wrangler secret put JWT_SECRET          # Set a production JWT secret
 | D1               | Database (users, channels, tasks)      | 5M reads/day, 100K writes/day   |
 | R2               | Media storage                          | 10GB, no egress fees             |
 
-### Step 3: Install the OpenClaw Plugin
+→ Then go to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
+
+---
+
+### Install the OpenClaw Plugin
 
 After the BotsChat server is running, connect your OpenClaw instance to it.
 
