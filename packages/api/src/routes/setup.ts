@@ -150,7 +150,7 @@ setup.post("/init", async (c) => {
     ...(isLoopback ? { cloudUrlWarning: hint } : {}),
     channel: { id: channel.id, name: channel.name },
     setupCommands: [
-      "openclaw plugins install @botschat/openclaw-plugin",
+      "openclaw plugins install @botschat/botschat",
       `openclaw config set channels.botschat.cloudUrl ${cloudUrl}`,
       `openclaw config set channels.botschat.pairingToken ${pairingToken}`,
       "openclaw config set channels.botschat.enabled true",

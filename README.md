@@ -1,7 +1,7 @@
 # BotsChat
 
 [![npm](https://img.shields.io/npm/v/botschat)](https://www.npmjs.com/package/botschat)
-[![npm](https://img.shields.io/npm/v/@botschat/openclaw-plugin)](https://www.npmjs.com/package/@botschat/openclaw-plugin)
+[![npm](https://img.shields.io/npm/v/@botschat/botschat)](https://www.npmjs.com/package/@botschat/botschat)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 A self-hosted chat interface for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
@@ -154,7 +154,7 @@ After the BotsChat server is running, connect your OpenClaw instance to it.
 **1. Install the plugin**
 
 ```bash
-openclaw plugins install @botschat/openclaw-plugin
+openclaw plugins install @botschat/botschat
 ```
 
 **2. Create a pairing token**

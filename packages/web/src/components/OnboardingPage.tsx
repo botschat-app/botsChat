@@ -148,7 +148,7 @@ export function OnboardingPage({ onSkip }: { onSkip: () => void }) {
   }, []);
 
   const setupCommand = pairingToken
-    ? `openclaw plugins install @botschat/openclaw-plugin && \\
+    ? `openclaw plugins install @botschat/botschat && \\
 openclaw config set channels.botschat.cloudUrl ${cloudUrl} && \\
 openclaw config set channels.botschat.pairingToken ${pairingToken} && \\
 openclaw config set channels.botschat.enabled true && \\
