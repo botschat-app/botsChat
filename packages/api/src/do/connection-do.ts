@@ -1,4 +1,6 @@
 import type { Env } from "../env.js";
+import { verifyToken, getJwtSecret } from "../utils/auth.js";
+import { generateId as generateIdUtil } from "../utils/id.js";
 
 /**
  * ConnectionDO — one Durable Object instance per BotsChat user.
@@ -283,10 +285,31 @@ export class ConnectionDO implements DurableObject {
   ): Promise<void> {
     const attachment = ws.deserializeAttachment() as { authenticated: boolean; tag: string } | null;
 
-    // Handle browser auth (session cookie/token validation)
+    // Handle browser auth — verify JWT token
     if (msg.type === "auth") {
-      // For now, accept browser connections. In production, validate
-      // the session token against D1.
+      const token = msg.token as string | undefined;
+      if (!token) {
+        ws.send(JSON.stringify({ type: "auth.fail", reason: "Missing token" }));
+        ws.close(4001, "Missing auth token");
+        return;
+      }
+
+      const secret = getJwtSecret(this.env);
+      const payload = await verifyToken(token, secret);
+      if (!payload) {
+        ws.send(JSON.stringify({ type: "auth.fail", reason: "Invalid or expired token" }));
+        ws.close(4001, "Authentication failed");
+        return;
+      }
+
+      // Verify the token's userId matches this DO's userId
+      const doUserId = await this.state.storage.get<string>("userId");
+      if (doUserId && payload.sub !== doUserId) {
+        ws.send(JSON.stringify({ type: "auth.fail", reason: "User mismatch" }));
+        ws.close(4001, "User mismatch");
+        return;
+      }
+
       ws.serializeAttachment({ ...attachment, authenticated: true });
       ws.send(JSON.stringify({ type: "auth.ok" }));
 
@@ -472,6 +495,37 @@ export class ConnectionDO implements DurableObject {
 
   // ---- Media caching ----
 
+  // ---- SSRF protection ----
+
+  /** Check if a URL is safe to fetch (not pointing to private/internal networks). */
+  private isUrlSafeToFetch(urlStr: string): boolean {
+    try {
+      const parsed = new URL(urlStr);
+      // Only allow https (block http, ftp, file, etc.)
+      if (parsed.protocol !== "https:") return false;
+
+      const hostname = parsed.hostname;
+      // Block private/reserved IP ranges and localhost
+      if (
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "[::1]" ||
+        hostname.endsWith(".local") ||
+        /^10\./.test(hostname) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+        /^192\.168\./.test(hostname) ||
+        /^169\.254\./.test(hostname) || // link-local
+        /^0\./.test(hostname) ||
+        hostname === "[::ffff:127.0.0.1]"
+      ) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Download an external image and cache it in R2. Returns the local
    * API URL (e.g. /api/media/...) or null if caching fails.
@@ -483,17 +537,28 @@ export class ConnectionDO implements DurableObject {
     // Also skip URLs that point back to our own media endpoint (absolute form)
     if (/\/api\/media\//.test(url)) return null;
 
+    // SSRF protection: only allow HTTPS URLs to public hosts
+    if (!this.isUrlSafeToFetch(url)) {
+      console.warn(`[DO] cacheExternalMedia: blocked unsafe URL ${url.slice(0, 120)}`);
+      return null;
+    }
+
     console.log(`[DO] cacheExternalMedia: attempting to cache ${url.slice(0, 120)}`);
+
+    const MAX_MEDIA_SIZE = 20 * 1024 * 1024; // 20 MB max
 
     try {
       const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
 
       // Download the external image — use arrayBuffer to avoid stream issues
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      const timeoutId = setTimeout(() => controller.abort(), 15_000); // 15s timeout
       let response: Response;
       try {
-        response = await fetch(url, { signal: controller.signal });
+        response = await fetch(url, {
+          signal: controller.signal,
+          redirect: "follow",   // follow redirects, but URL was already validated
+        });
       } finally {
         clearTimeout(timeoutId);
       }
@@ -506,8 +571,21 @@ export class ConnectionDO implements DurableObject {
       const contentType = response.headers.get("Content-Type") ?? "image/png";
       // Validate that the response is actually an image
       if (!contentType.startsWith("image/")) {
-        console.warn(`[DO] cacheExternalMedia: unexpected Content-Type "${contentType}" for ${url.slice(0, 120)}`);
-        // Still try to cache it — some servers return wrong content types
+        console.warn(`[DO] cacheExternalMedia: non-image Content-Type "${contentType}", skipping ${url.slice(0, 120)}`);
+        return null;
+      }
+
+      // Reject SVG (can contain scripts — XSS vector)
+      if (contentType.includes("svg")) {
+        console.warn(`[DO] cacheExternalMedia: blocked SVG content from ${url.slice(0, 120)}`);
+        return null;
+      }
+
+      // Check Content-Length header early if available
+      const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
+      if (contentLength > MAX_MEDIA_SIZE) {
+        console.warn(`[DO] cacheExternalMedia: Content-Length ${contentLength} exceeds limit for ${url.slice(0, 120)}`);
+        return null;
       }
 
       // Read the body as ArrayBuffer for maximum compatibility with R2
@@ -516,14 +594,17 @@ export class ConnectionDO implements DurableObject {
         console.warn(`[DO] cacheExternalMedia: empty body for ${url.slice(0, 120)}`);
         return null;
       }
+      if (body.byteLength > MAX_MEDIA_SIZE) {
+        console.warn(`[DO] cacheExternalMedia: body size ${body.byteLength} exceeds limit for ${url.slice(0, 120)}`);
+        return null;
+      }
 
-      // Determine extension from Content-Type
+      // Determine extension from Content-Type (no SVG)
       const extMap: Record<string, string> = {
         "image/png": "png",
         "image/jpeg": "jpg",
         "image/gif": "gif",
         "image/webp": "webp",
-        "image/svg+xml": "svg",
       };
       const ext = extMap[contentType] ?? "png";
       const key = `media/${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
@@ -853,14 +934,9 @@ export class ConnectionDO implements DurableObject {
     return channelId;
   }
 
-  /** Generate a short random ID (URL-safe). */
+  /** Generate a short random ID (URL-safe) using CSPRNG (bias-free). */
   private generateId(prefix = ""): string {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let id = prefix;
-    for (let i = 0; i < 16; i++) {
-      id += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return id;
+    return generateIdUtil(prefix);
   }
 
   /**
@@ -913,23 +989,42 @@ export class ConnectionDO implements DurableObject {
   }
 
   private async validatePairingToken(token: string): Promise<boolean> {
-    // Query D1 to validate the pairing token
-    // The DO receives the env via constructor, but D1 queries from DO
-    // require fetching through the API worker. For simplicity in the DO,
-    // we store validated tokens in DO storage after first validation.
+    // The API worker validates pairing tokens against D1 before routing
+    // to the DO (and passes ?verified=1). Connections that arrive here
+    // pre-verified are fast-tracked in handleOpenClawMessage.
     //
-    // Check DO-local cache first:
-    const cached = await this.state.storage.get<boolean>(`token:${token}`);
-    if (cached === true) return true;
-    if (cached === false) return false;
+    // For tokens that arrive WITHOUT pre-verification (e.g. direct DO
+    // access, which shouldn't happen in normal flow), we validate
+    // against D1 ourselves and cache the result with a TTL.
 
-    // If not cached, we accept the token optimistically and let the
-    // API worker validate it on the next REST call. In production,
-    // the API worker should validate before routing to the DO.
-    //
-    // For now, accept any non-empty bc_pat_ token:
-    const isValid = token.startsWith("bc_pat_") && token.length > 10;
-    await this.state.storage.put(`token:${token}`, isValid);
-    return isValid;
+    if (!token || !token.startsWith("bc_pat_") || token.length < 20) {
+      return false;
+    }
+
+    // Check DO-local cache first (with 30-second TTL — short to ensure
+    // revoked tokens are invalidated quickly)
+    const cacheKey = `token:${token}`;
+    const cached = await this.state.storage.get<{ valid: boolean; cachedAt: number }>(cacheKey);
+    if (cached) {
+      const ageMs = Date.now() - cached.cachedAt;
+      if (ageMs < 30_000) return cached.valid; // 30-second TTL
+      // Expired — fall through to re-validate
+    }
+
+    // Validate against D1
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
+      )
+        .bind(token)
+        .first<{ user_id: string }>();
+
+      const isValid = !!row;
+      await this.state.storage.put(cacheKey, { valid: isValid, cachedAt: Date.now() });
+      return isValid;
+    } catch (err) {
+      console.error("[DO] Failed to validate pairing token against D1:", err);
+      return false;
+    }
   }
 }

@@ -33,9 +33,11 @@ new_sqlite_classes = ["ConnectionDO"]
 
 # --- Environment Variables ---
 [vars]
-ENVIRONMENT = "development"
+ENVIRONMENT = "production"
 # Firebase project ID for Google/GitHub Sign-In token verification.
 FIREBASE_PROJECT_ID = "botschat-130ff"
+# IMPORTANT: For production, set JWT_SECRET via `wrangler secret put JWT_SECRET`.
+# The app will refuse to start in non-development mode without it.
 
 # --- Dev settings ---
 [dev]

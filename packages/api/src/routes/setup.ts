@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
-import { createToken, hashPassword } from "../utils/auth.js";
+import { createToken, hashPassword, verifyPassword, getJwtSecret } from "../utils/auth.js";
 import { verifyFirebaseIdToken } from "../utils/firebase.js";
 import { generateId, generatePairingToken } from "../utils/id.js";
 import { resolveCloudUrlWithHints } from "../utils/resolve-url.js";
@@ -93,32 +93,66 @@ setup.post("/init", async (c) => {
     userId = row.id;
     displayName = row.display_name;
   } else {
-    // ---- Email + password path ----
+    // ---- Email + password path (local dev only) ----
+    if (c.env.ENVIRONMENT !== "development") {
+      return c.json({ error: "Email login is disabled. Please use Google or GitHub sign-in." }, 403);
+    }
+
     if (!body.email?.trim() || !body.password?.trim()) {
       return c.json({ error: "email+password or idToken is required" }, 400);
     }
 
+    // Cap password length to prevent PBKDF2 resource exhaustion (DoS)
+    if (body.password.length > 256) {
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
+
     email = body.email.trim().toLowerCase();
-    const passwordHash = await hashPassword(body.password);
 
     const row = await c.env.DB.prepare(
-      "SELECT id, display_name FROM users WHERE email = ? AND password_hash = ?",
-    ).bind(email, passwordHash).first<{ id: string; display_name: string | null }>();
+      "SELECT id, display_name, password_hash FROM users WHERE email = ?",
+    ).bind(email).first<{ id: string; display_name: string | null; password_hash: string }>();
 
-    if (!row) {
+    if (!row || !row.password_hash) {
       return c.json({ error: "Invalid email or password" }, 401);
+    }
+
+    const { valid, needsRehash } = await verifyPassword(body.password, row.password_hash);
+    if (!valid) {
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
+
+    // Transparently upgrade legacy SHA-256 hashes to PBKDF2
+    if (needsRehash) {
+      const newHash = await hashPassword(body.password);
+      await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(newHash, row.id)
+        .run();
     }
 
     userId = row.id;
     displayName = row.display_name;
   }
 
-  // ---- Create a fresh pairing token for this setup ----
-  const ptId = generateId("pt_");
-  const pairingToken = generatePairingToken();
-  await c.env.DB.prepare(
-    "INSERT INTO pairing_tokens (id, user_id, token, label) VALUES (?, ?, ?, ?)",
-  ).bind(ptId, userId, pairingToken, "CLI setup").run();
+  // ---- Reuse recent token or create a new pairing token ----
+  // If a CLI setup token was created in the last 5 minutes, reuse it
+  let pairingToken: string;
+  const recentToken = await c.env.DB.prepare(
+    `SELECT token FROM pairing_tokens
+     WHERE user_id = ? AND label = 'CLI setup' AND revoked_at IS NULL
+       AND created_at > unixepoch() - 300
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(userId).first<{ token: string }>();
+
+  if (recentToken) {
+    pairingToken = recentToken.token;
+  } else {
+    const ptId = generateId("pt_");
+    pairingToken = generatePairingToken();
+    await c.env.DB.prepare(
+      "INSERT INTO pairing_tokens (id, user_id, token, label) VALUES (?, ?, ?, ?)",
+    ).bind(ptId, userId, pairingToken, "CLI setup").run();
+  }
 
   // ---- Ensure a default channel exists ----
   let channel = await c.env.DB.prepare(
@@ -134,7 +168,7 @@ setup.post("/init", async (c) => {
   }
 
   // ---- Issue JWT ----
-  const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  const secret = getJwtSecret(c.env);
   const token = await createToken(userId, secret);
 
   // ---- Resolve the best cloud URL for the plugin to connect back ----
@@ -183,7 +217,7 @@ setup.get("/status", async (c) => {
   }
 
   const { verifyToken } = await import("../utils/auth.js");
-  const jwtSecret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  const jwtSecret = getJwtSecret(c.env);
   const payload = await verifyToken(authHeader.slice(7), jwtSecret);
   if (!payload) {
     return c.json({ error: "Invalid or expired token" }, 401);

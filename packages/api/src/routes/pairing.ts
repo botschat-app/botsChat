@@ -28,7 +28,8 @@ pairing.get("/", async (c) => {
   return c.json({
     tokens: (results ?? []).map((r) => ({
       id: r.id,
-      token: r.token,
+      // SECURITY: never expose the full token in list responses.
+      // Full token is only returned once at creation time (POST).
       tokenPreview: `bc_pat_...${r.token.slice(-8)}`,
       label: r.label,
       lastConnectedAt: r.last_connected_at,
@@ -45,6 +46,18 @@ pairing.post("/", async (c) => {
   const { label } = await c.req.json<{ label?: string }>().catch(() => ({
     label: undefined,
   }));
+
+  // Limit active (non-revoked) tokens per user
+  const MAX_ACTIVE_TOKENS = 10;
+  const countRow = await c.env.DB.prepare(
+    "SELECT COUNT(*) as cnt FROM pairing_tokens WHERE user_id = ? AND revoked_at IS NULL",
+  )
+    .bind(userId)
+    .first<{ cnt: number }>();
+
+  if (countRow && countRow.cnt >= MAX_ACTIVE_TOKENS) {
+    return c.json({ error: `Maximum of ${MAX_ACTIVE_TOKENS} active pairing tokens reached. Revoke an existing token first.` }, 400);
+  }
 
   const id = generateId("pt_");
   const token = generatePairingToken();

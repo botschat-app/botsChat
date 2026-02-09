@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env.js";
-import { authMiddleware } from "./utils/auth.js";
+import { authMiddleware, verifyToken, getJwtSecret, verifyMediaSignature } from "./utils/auth.js";
 import { auth } from "./routes/auth.js";
 import { agents } from "./routes/agents.js";
 import { channels } from "./routes/channels.js";
@@ -18,11 +18,66 @@ export { ConnectionDO } from "./do/connection-do.js";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Global CORS
-app.use("/*", cors({ origin: "*", allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] }));
+// Production CORS origins
+const PRODUCTION_ORIGINS = [
+  "https://console.botschat.app",
+  "https://botschat.app",
+  "https://botschat-api.auxtenwpc.workers.dev",
+];
+
+// CORS and security headers — skip for WebSocket upgrade requests
+// (101 responses have immutable headers in Cloudflare Workers)
+const corsMiddleware = cors({
+  origin: (origin, c) => {
+    if (PRODUCTION_ORIGINS.includes(origin)) return origin;
+    // Only allow localhost/private IPs in development
+    if ((c as unknown as { env: Env }).env?.ENVIRONMENT === "development") {
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+      if (/^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(origin)) return origin;
+    }
+    return ""; // disallow
+  },
+  allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+});
+
+app.use("/*", async (c, next) => {
+  // WebSocket upgrades return 101 with immutable headers — skip CORS & security headers
+  if (c.req.header("Upgrade")?.toLowerCase() === "websocket") {
+    await next();
+    return;
+  }
+
+  // Apply CORS for regular HTTP requests
+  return corsMiddleware(c, next);
+});
+
+// Security response headers.
+// In Cloudflare Workers, responses from Durable Objects (stub.fetch()) and
+// subrequests have immutable headers. We clone the response first, then set
+// security headers on the mutable clone. This also makes headers mutable for
+// the CORS middleware which runs AFTER this (registered earlier → runs later
+// in the response phase).
+app.use("/*", async (c, next) => {
+  await next();
+  if (c.res.status === 101) return; // WebSocket 101 — can't clone
+  // Clone to ensure mutable headers
+  c.res = new Response(c.res.body, c.res);
+  c.res.headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' https://apis.google.com https://*.firebaseapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.r2.dev https://*.cloudflarestorage.com data: blob:; connect-src 'self' wss://*.botschat.app wss://console.botschat.app https://apis.google.com https://*.googleapis.com; frame-src https://accounts.google.com https://*.firebaseapp.com",
+  );
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("X-Frame-Options", "DENY");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+});
 
 // Health check
 app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
+
+// Rate limiting is handled by Cloudflare WAF Rate Limiting Rules (Dashboard).
+// See the security audit for recommended rule configuration.
+// No in-memory rate limiter — it cannot survive Worker isolate restarts
+// and is not shared across instances.
 
 // ---- Public routes (no auth) ----
 app.route("/api/auth", auth);
@@ -196,12 +251,29 @@ protectedApp.route("/channels/:channelId/sessions", sessions);
 protectedApp.route("/pairing-tokens", pairing);
 protectedApp.route("/upload", upload);
 
-// ---- Media serving route (public, no auth) ----
+// ---- Media serving route (signed URL or Bearer auth) ----
 app.get("/api/media/:userId/:filename", async (c) => {
   const userId = c.req.param("userId");
   const filename = c.req.param("filename");
-  const key = `media/${userId}/${filename}`;
 
+  // Verify access: either a valid signed URL or a valid Bearer token
+  const expires = c.req.query("expires");
+  const sig = c.req.query("sig");
+  const secret = getJwtSecret(c.env);
+
+  if (expires && sig) {
+    // Signed URL verification
+    const valid = await verifyMediaSignature(userId, filename, expires, sig, secret);
+    if (!valid) {
+      return c.json({ error: "Invalid or expired media signature" }, 403);
+    }
+  } else {
+    // Fall back to Bearer token auth
+    const denied = await verifyUserAccess(c, userId);
+    if (denied) return denied;
+  }
+
+  const key = `media/${userId}/${filename}`;
   const object = await c.env.MEDIA.get(key);
   if (!object) {
     return c.json({ error: "Not found" }, 404);
@@ -209,10 +281,28 @@ app.get("/api/media/:userId/:filename", async (c) => {
 
   const headers = new Headers();
   headers.set("Content-Type", object.httpMetadata?.contentType ?? "application/octet-stream");
-  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  headers.set("Cache-Control", "public, max-age=3600"); // 1h cache (matches signature expiry)
 
   return new Response(object.body, { headers });
 });
+
+// ---- Helper: verify JWT and ensure userId matches ----
+async function verifyUserAccess(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined }; env: Env; json: (data: unknown, status?: number) => Response }, userId: string): Promise<Response | null> {
+  const authHeader = c.req.header("Authorization");
+  const tokenStr = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : c.req.query("token");
+  if (!tokenStr) {
+    return c.json({ error: "Missing Authorization header or token query param" }, 401);
+  }
+  const secret = getJwtSecret(c.env);
+  const payload = await verifyToken(tokenStr, secret);
+  if (!payload) {
+    return c.json({ error: "Invalid or expired token" }, 401);
+  }
+  if (payload.sub !== userId) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  return null; // access granted
+}
 
 // ---- WebSocket upgrade routes (BEFORE protected middleware) ----
 
@@ -268,6 +358,9 @@ app.all("/api/gateway/:connId", async (c) => {
 });
 
 // Browser client connects to: /api/ws/:userId/:sessionId
+// Auth is handled entirely inside the DO via the "auth" message after
+// the WebSocket connection is established. This avoids putting the JWT
+// in the URL query string (which would leak it in logs/browser history).
 app.all("/api/ws/:userId/:sessionId", async (c) => {
   const userId = c.req.param("userId");
   const sessionId = c.req.param("sessionId");
@@ -281,6 +374,8 @@ app.all("/api/ws/:userId/:sessionId", async (c) => {
 // Connection status: /api/connection/:userId/status
 app.get("/api/connection/:userId/status", async (c) => {
   const userId = c.req.param("userId");
+  const denied = await verifyUserAccess(c, userId);
+  if (denied) return denied;
   const doId = c.env.CONNECTION_DO.idFromName(userId);
   const stub = c.env.CONNECTION_DO.get(doId);
   const url = new URL(c.req.url);
@@ -291,6 +386,8 @@ app.get("/api/connection/:userId/status", async (c) => {
 // Message history: /api/messages/:userId?sessionKey=xxx
 app.get("/api/messages/:userId", async (c) => {
   const userId = c.req.param("userId");
+  const denied = await verifyUserAccess(c, userId);
+  if (denied) return denied;
   const doId = c.env.CONNECTION_DO.idFromName(userId);
   const stub = c.env.CONNECTION_DO.get(doId);
   const url = new URL(c.req.url);

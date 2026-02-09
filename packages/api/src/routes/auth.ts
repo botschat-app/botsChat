@@ -1,13 +1,17 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
-import { createToken, hashPassword } from "../utils/auth.js";
+import { createToken, createRefreshToken, verifyRefreshToken, hashPassword, verifyPassword, getJwtSecret } from "../utils/auth.js";
 import { verifyFirebaseIdToken } from "../utils/firebase.js";
 import { generateId } from "../utils/id.js";
 
 const auth = new Hono<{ Bindings: Env }>();
 
-/** POST /api/auth/register */
+/** POST /api/auth/register — disabled in production (OAuth only) */
 auth.post("/register", async (c) => {
+  if (c.env.ENVIRONMENT !== "development") {
+    return c.json({ error: "Email registration is disabled. Please sign in with Google or GitHub." }, 403);
+  }
+
   const { email, password, displayName } = await c.req.json<{
     email: string;
     password: string;
@@ -16,6 +20,23 @@ auth.post("/register", async (c) => {
 
   if (!email?.trim() || !password?.trim()) {
     return c.json({ error: "Email and password are required" }, 400);
+  }
+
+  // Basic email format validation
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    return c.json({ error: "Invalid email format" }, 400);
+  }
+
+  // Password strength requirements
+  if (password.length < 8) {
+    return c.json({ error: "Password must be at least 8 characters long" }, 400);
+  }
+  // Cap password length to prevent PBKDF2 resource exhaustion (DoS)
+  if (password.length > 256) {
+    return c.json({ error: "Password must not exceed 256 characters" }, 400);
+  }
+  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+    return c.json({ error: "Password must contain both letters and numbers" }, 400);
   }
 
   const id = generateId("u_");
@@ -29,19 +50,25 @@ auth.post("/register", async (c) => {
       .run();
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE")) {
-      return c.json({ error: "Email already registered" }, 409);
+      // Generic error to prevent email enumeration
+      return c.json({ error: "Registration failed. Please try a different email or sign in." }, 409);
     }
     throw err;
   }
 
-  const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  const secret = getJwtSecret(c.env);
   const token = await createToken(id, secret);
+  const refreshToken = await createRefreshToken(id, secret);
 
-  return c.json({ id, email, token }, 201);
+  return c.json({ id, email, token, refreshToken }, 201);
 });
 
-/** POST /api/auth/login */
+/** POST /api/auth/login — disabled in production (OAuth only) */
 auth.post("/login", async (c) => {
+  if (c.env.ENVIRONMENT !== "development") {
+    return c.json({ error: "Email login is disabled. Please sign in with Google or GitHub." }, 403);
+  }
+
   const { email, password } = await c.req.json<{
     email: string;
     password: string;
@@ -51,26 +78,45 @@ auth.post("/login", async (c) => {
     return c.json({ error: "Email and password are required" }, 400);
   }
 
-  const passwordHash = await hashPassword(password);
-
-  const row = await c.env.DB.prepare(
-    "SELECT id, email, display_name FROM users WHERE email = ? AND password_hash = ?",
-  )
-    .bind(email.trim().toLowerCase(), passwordHash)
-    .first<{ id: string; email: string; display_name: string | null }>();
-
-  if (!row) {
+  // Cap password length to prevent PBKDF2 resource exhaustion (DoS)
+  if (password.length > 256) {
     return c.json({ error: "Invalid email or password" }, 401);
   }
 
-  const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  // Fetch user with password hash — we now verify in application code
+  const row = await c.env.DB.prepare(
+    "SELECT id, email, display_name, password_hash FROM users WHERE email = ?",
+  )
+    .bind(email.trim().toLowerCase())
+    .first<{ id: string; email: string; display_name: string | null; password_hash: string }>();
+
+  if (!row || !row.password_hash) {
+    return c.json({ error: "Invalid email or password" }, 401);
+  }
+
+  const { valid, needsRehash } = await verifyPassword(password, row.password_hash);
+  if (!valid) {
+    return c.json({ error: "Invalid email or password" }, 401);
+  }
+
+  // Transparently upgrade legacy SHA-256 hashes to PBKDF2
+  if (needsRehash) {
+    const newHash = await hashPassword(password);
+    await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+      .bind(newHash, row.id)
+      .run();
+  }
+
+  const secret = getJwtSecret(c.env);
   const token = await createToken(row.id, secret);
+  const refreshToken = await createRefreshToken(row.id, secret);
 
   return c.json({
     id: row.id,
     email: row.email,
     displayName: row.display_name,
     token,
+    refreshToken,
   });
 });
 
@@ -171,15 +217,17 @@ async function handleFirebaseAuth(c: {
     row = { id, email, display_name: displayName, auth_provider: authProvider, password_hash: "" };
   }
 
-  // 4. Issue our own JWT
-  const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  // 4. Issue our own JWT (access + refresh)
+  const secret = getJwtSecret(c.env);
   const token = await createToken(row!.id, secret);
+  const refreshToken = await createRefreshToken(row!.id, secret);
 
   return c.json({
     id: row!.id,
     email: row!.email,
     displayName: row!.display_name,
     token,
+    refreshToken,
   });
 }
 
@@ -187,6 +235,37 @@ async function handleFirebaseAuth(c: {
 auth.post("/firebase", (c) => handleFirebaseAuth(c));
 auth.post("/google", (c) => handleFirebaseAuth(c));
 auth.post("/github", (c) => handleFirebaseAuth(c));
+
+/** POST /api/auth/refresh — exchange a refresh token for a new access token */
+auth.post("/refresh", async (c) => {
+  const { refreshToken } = await c.req.json<{ refreshToken: string }>();
+
+  if (!refreshToken?.trim()) {
+    return c.json({ error: "refreshToken is required" }, 400);
+  }
+
+  const secret = getJwtSecret(c.env);
+  const payload = await verifyRefreshToken(refreshToken, secret);
+
+  if (!payload) {
+    return c.json({ error: "Invalid or expired refresh token" }, 401);
+  }
+
+  // Issue a new short-lived access token
+  const token = await createToken(payload.sub, secret);
+
+  return c.json({ token });
+});
+
+/** GET /api/auth/config — public endpoint returning allowed auth methods */
+auth.get("/config", (c) => {
+  const isDev = c.env.ENVIRONMENT === "development";
+  return c.json({
+    emailEnabled: isDev,
+    googleEnabled: !!c.env.FIREBASE_PROJECT_ID,
+    githubEnabled: !!c.env.FIREBASE_PROJECT_ID,
+  });
+});
 
 /** GET /api/auth/me — returns current user info */
 auth.get("/me", async (c) => {
