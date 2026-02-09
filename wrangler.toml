@@ -34,6 +34,8 @@ new_sqlite_classes = ["ConnectionDO"]
 # --- Environment Variables ---
 [vars]
 ENVIRONMENT = "development"
+# Firebase project ID for Google/GitHub Sign-In token verification.
+FIREBASE_PROJECT_ID = "botschat-130ff"
 
 # --- Dev settings ---
 [dev]

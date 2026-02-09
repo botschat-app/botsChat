@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { createToken, hashPassword } from "../utils/auth.js";
+import { verifyFirebaseIdToken } from "../utils/firebase.js";
 import { generateId } from "../utils/id.js";
 
 const auth = new Hono<{ Bindings: Env }>();
@@ -72,6 +73,105 @@ auth.post("/login", async (c) => {
     token,
   });
 });
+
+/**
+ * POST /api/auth/firebase — sign in (or register) with a Firebase ID token.
+ * Works for all Firebase-backed providers (Google, GitHub, etc.).
+ */
+async function handleFirebaseAuth(c: {
+  req: { json: <T>() => Promise<T> };
+  env: Env;
+  json: (data: unknown, status?: number) => Response;
+}) {
+  const { idToken } = await c.req.json<{ idToken: string }>();
+
+  if (!idToken?.trim()) {
+    return c.json({ error: "idToken is required" }, 400);
+  }
+
+  const projectId = c.env.FIREBASE_PROJECT_ID;
+  if (!projectId) {
+    return c.json({ error: "Firebase sign-in is not configured" }, 500);
+  }
+
+  // 1. Verify the Firebase ID token
+  let firebaseUser;
+  try {
+    firebaseUser = await verifyFirebaseIdToken(idToken, projectId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Token verification failed";
+    return c.json({ error: msg }, 401);
+  }
+
+  const email = firebaseUser.email?.toLowerCase();
+  if (!email) {
+    return c.json({ error: "Account has no email address" }, 400);
+  }
+
+  const firebaseUid = firebaseUser.sub;
+  // Determine provider from Firebase token (google.com, github.com, etc.)
+  const signInProvider = firebaseUser.firebase?.sign_in_provider ?? "unknown";
+  const authProvider = signInProvider.includes("google")
+    ? "google"
+    : signInProvider.includes("github")
+      ? "github"
+      : signInProvider;
+  const displayName = firebaseUser.name ?? email.split("@")[0];
+
+  // 2. Look up existing user by firebase_uid first, then by email
+  let row = await c.env.DB.prepare(
+    "SELECT id, email, display_name, auth_provider FROM users WHERE firebase_uid = ?",
+  )
+    .bind(firebaseUid)
+    .first<{ id: string; email: string; display_name: string | null; auth_provider: string }>();
+
+  if (!row) {
+    // Check if there's an existing email-based account — link it
+    row = await c.env.DB.prepare(
+      "SELECT id, email, display_name, auth_provider FROM users WHERE email = ?",
+    )
+      .bind(email)
+      .first<{ id: string; email: string; display_name: string | null; auth_provider: string }>();
+
+    if (row) {
+      // Link Firebase UID to existing account
+      await c.env.DB.prepare(
+        "UPDATE users SET firebase_uid = ?, auth_provider = ?, updated_at = unixepoch() WHERE id = ?",
+      )
+        .bind(firebaseUid, authProvider, row.id)
+        .run();
+    }
+  }
+
+  if (!row) {
+    // 3. Create a new user (OAuth-only, no password)
+    const id = generateId("u_");
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, email, password_hash, display_name, auth_provider, firebase_uid)
+       VALUES (?, ?, '', ?, ?, ?)`,
+    )
+      .bind(id, email, displayName, authProvider, firebaseUid)
+      .run();
+
+    row = { id, email, display_name: displayName, auth_provider: authProvider };
+  }
+
+  // 4. Issue our own JWT
+  const secret = c.env.JWT_SECRET ?? "botschat-dev-secret";
+  const token = await createToken(row.id, secret);
+
+  return c.json({
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    token,
+  });
+}
+
+// Register the unified Firebase auth handler and provider-specific aliases
+auth.post("/firebase", (c) => handleFirebaseAuth(c));
+auth.post("/google", (c) => handleFirebaseAuth(c));
+auth.post("/github", (c) => handleFirebaseAuth(c));
 
 /** GET /api/auth/me — returns current user info */
 auth.get("/me", async (c) => {
