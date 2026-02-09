@@ -5,6 +5,7 @@ import { dlog } from "./debug-log";
 const API_BASE = "/api";
 
 let _token: string | null = localStorage.getItem("botschat_token");
+let _refreshToken: string | null = localStorage.getItem("botschat_refresh_token");
 
 export function setToken(token: string | null) {
   _token = token;
@@ -12,8 +13,37 @@ export function setToken(token: string | null) {
   else localStorage.removeItem("botschat_token");
 }
 
+export function setRefreshToken(token: string | null) {
+  _refreshToken = token;
+  if (token) localStorage.setItem("botschat_refresh_token", token);
+  else localStorage.removeItem("botschat_refresh_token");
+}
+
 export function getToken(): string | null {
   return _token;
+}
+
+export function getRefreshToken(): string | null {
+  return _refreshToken;
+}
+
+/** Try to refresh the access token using the refresh token. */
+async function tryRefreshAccessToken(): Promise<boolean> {
+  if (!_refreshToken) return false;
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: _refreshToken }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json() as { token: string };
+    setToken(data.token);
+    dlog.info("API", "Access token refreshed successfully");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function request<T>(
@@ -44,6 +74,27 @@ async function request<T>(
     throw err;
   }
 
+  // Auto-refresh on 401 (expired access token)
+  if (res.status === 401 && _refreshToken && !path.includes("/auth/refresh")) {
+    const refreshed = await tryRefreshAccessToken();
+    if (refreshed) {
+      // Retry the original request with the new token
+      headers["Authorization"] = `Bearer ${_token}`;
+      try {
+        res = await fetch(`${API_BASE}${path}`, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          cache: "no-store",
+        });
+      } catch (err) {
+        const ms = Math.round(performance.now() - t0);
+        dlog.error("API", `✗ ${tag} — network error on retry (${ms}ms)`, String(err));
+        throw err;
+      }
+    }
+  }
+
   const ms = Math.round(performance.now() - t0);
 
   if (!res.ok) {
@@ -59,11 +110,19 @@ async function request<T>(
 }
 
 // ---- Auth ----
-export type AuthResponse = { id: string; email: string; token: string; displayName?: string };
+export type AuthResponse = { id: string; email: string; token: string; refreshToken?: string; displayName?: string };
 
 export type UserSettings = { defaultModel?: string };
 
+export type AuthConfig = {
+  emailEnabled: boolean;
+  googleEnabled: boolean;
+  githubEnabled: boolean;
+};
+
 export const authApi = {
+  /** Fetch server-side auth configuration (which methods are available). */
+  config: () => request<AuthConfig>("GET", "/auth/config"),
   register: (email: string, password: string, displayName?: string) =>
     request<AuthResponse>("POST", "/auth/register", { email, password, displayName }),
   login: (email: string, password: string) =>
@@ -175,7 +234,7 @@ export const tasksApi = {
     request<{ tasks: Task[] }>("GET", `/channels/${channelId}/tasks`),
   listAll: (kind: "background" | "adhoc" = "background") =>
     request<{ tasks: TaskWithChannel[] }>("GET", `/tasks?kind=${kind}`),
-  /** Fetch OpenClaw-owned fields (schedule/instructions/model) cached in the DO. */
+  /** Fetch OpenClaw-owned fields (schedule/instructions/model) from plugin via DO (live task.scan.request, no cache). */
   scanData: () =>
     request<{ tasks: TaskScanEntry[] }>("GET", "/task-scan"),
   create: (channelId: string, data: { name: string; kind: "background" | "adhoc"; schedule?: string; instructions?: string }) =>
@@ -230,7 +289,8 @@ export const messagesApi = {
 // ---- Pairing Tokens ----
 export type PairingToken = {
   id: string;
-  token: string;
+  // Full token is no longer returned by the GET endpoint (security).
+  // Only `tokenPreview` (masked) is available after creation.
   tokenPreview: string;
   label: string | null;
   lastConnectedAt: number | null;
