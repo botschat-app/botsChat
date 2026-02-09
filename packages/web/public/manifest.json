@@ -1,0 +1,24 @@
+{
+  "name": "BotsChat",
+  "short_name": "BotsChat",
+  "description": "AI agent orchestration console",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1A1D21",
+  "theme_color": "#1A1D21",
+  "icons": [
+    {
+      "src": "/botschat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/botschat-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
