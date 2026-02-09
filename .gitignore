@@ -1,7 +1,7 @@
-# 依赖
+# Dependencies
 node_modules/
 
-# 构建产物
+# Build artifacts
 dist/
 *.tsbuildinfo
 
@@ -9,12 +9,12 @@ dist/
 .wrangler/
 .dev.vars
 
-# 环境变量
+# Environment variables
 .env
 .env.*
 *.local
 
-# 编辑器 / IDE
+# Editor / IDE
 .DS_Store
 .cursor/
 .vscode/
@@ -22,19 +22,19 @@ dist/
 *.swo
 *~
 
-# 日志
+# Logs
 *.log
 npm-debug.log*
 
-# 系统文件
+# System files
 Thumbs.db
 
-# 临时文件
+# Temporary files
 *.tmp
 *.bak
 
-# AI / Cursor 生成的计划文件
+# AI / Cursor generated plan files
 *.plan.md
 
-# VS Code / Cursor 工作区文件（含本地路径）
+# VS Code / Cursor workspace files (contain local paths)
 *.code-workspace

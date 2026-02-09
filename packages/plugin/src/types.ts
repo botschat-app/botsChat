@@ -7,7 +7,7 @@
 export type BotsChatAccountConfig = {
   enabled?: boolean;
   name?: string;
-  cloudUrl?: string; // e.g. "botschat.app"
+  cloudUrl?: string; // e.g. "console.botschat.app"
   pairingToken?: string; // e.g. "bc_pat_xxxxxxxx"
 };
 

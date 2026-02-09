@@ -5,6 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "botschat-setup": "./bin/botschat-setup.mjs"
+  },
   "openclaw": {
     "extensions": [
       "./dist/index.js"
@@ -17,6 +20,7 @@
   },
   "files": [
     "dist/",
+    "bin/",
     "openclaw.plugin.json"
   ],
   "publishConfig": {

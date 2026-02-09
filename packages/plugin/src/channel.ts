@@ -262,7 +262,7 @@ export const botschatPlugin = {
       allowFrom: [] as string[],
       policyPath: "channels.botschat.pairingToken",
       allowFromPath: "channels.botschat.dm.allowFrom",
-      approveHint: "Pair via BotsChat cloud dashboard (get a pairing token at botschat.app)",
+      approveHint: "Pair via BotsChat cloud dashboard (get a pairing token at console.botschat.app)",
     }),
   },
 
@@ -294,8 +294,8 @@ export const botschatPlugin = {
       input: { url?: string; token?: string; useEnv?: boolean };
     }) => {
       if (input.useEnv) return null;
-      if (!input.url?.trim()) return "BotsChat requires --url (e.g., --url botschat.app)";
-      if (!input.token?.trim()) return "BotsChat requires --token (pairing token from botschat.app dashboard)";
+      if (!input.url?.trim()) return "BotsChat requires --url (e.g., --url console.botschat.app)";
+      if (!input.token?.trim()) return "BotsChat requires --token (pairing token from console.botschat.app)";
       return null;
     },
   },

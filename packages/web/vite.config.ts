@@ -11,7 +11,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/api": {
-        target: "https://botschat-api.auxtenwpc.workers.dev",
+        target: "https://console.botschat.app",
         changeOrigin: true,
         ws: true,
       },
