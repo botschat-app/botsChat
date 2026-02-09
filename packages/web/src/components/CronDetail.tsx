@@ -306,7 +306,7 @@ export function CronDetail() {
 
   if (!task) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
+      <div className="flex-1 h-full flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
         <div className="text-center">
           <svg
             className="w-16 h-16 mx-auto mb-4"
@@ -333,10 +333,10 @@ export function CronDetail() {
   const channel = state.channels.find((c) => c.id === task.channelId);
 
   return (
-    <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
+    <div className="flex-1 h-full flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
       {/* ---- Header ---- */}
       <div
-        className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2 sm:py-3"
+        className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2 sm:py-3 flex-shrink-0"
         style={{ borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
@@ -707,10 +707,14 @@ function CronInfoAndContent({
   // Mobile: simple vertical stack (no resize)
   if (isMobile) {
     return (
-      <>
-        <div style={{ borderBottom: "1px solid var(--border)" }}>{infoSection}</div>
+      <div className="flex-1 min-h-0 flex flex-col">
+        {/* Info section — scrollable, max 40% of viewport height */}
+        <div className="flex-shrink-0 overflow-y-auto" style={{ maxHeight: "40vh", borderBottom: "1px solid var(--border)" }}>
+          {infoSection}
+        </div>
+        {/* History + output — takes remaining space */}
         <CronContentPanels cronJobs={state.cronJobs} selectedCronJobId={state.selectedCronJobId} handleSelectJob={handleSelectJob} mobile />
-      </>
+      </div>
     );
   }
 
@@ -866,7 +870,7 @@ function CronContentPanels({
       className="flex-1 min-h-0"
     >
       {/* Job list panel */}
-      <Panel id="cron-jobs" defaultSize="20%" minSize="12%" maxSize="40%">
+      <Panel id="cron-jobs" defaultSize="20%" minSize="8%" maxSize="40%">
         {jobListContent}
       </Panel>
 
@@ -935,7 +939,7 @@ function JobOutputPanel({
 
   if (!job) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
+      <div className="flex-1 h-full flex items-center justify-center" style={{ background: "var(--bg-surface)" }}>
         <p className="text-caption" style={{ color: "var(--text-muted)" }}>
           {jobs.length > 0 ? "Select a run to view output" : "No execution history yet"}
         </p>
@@ -948,7 +952,7 @@ function JobOutputPanel({
   const blocks = job.summary ? parseMessageBlocks(job.summary) : [];
 
   return (
-    <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
+    <div className="flex-1 h-full flex flex-col min-w-0" style={{ background: "var(--bg-surface)" }}>
       {/* Job header bar */}
       <div
         className="flex items-center gap-3 px-5 py-2.5 flex-shrink-0"

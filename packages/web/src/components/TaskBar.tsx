@@ -274,7 +274,7 @@ export function TaskBar() {
               placeholder="e.g., every 6h or cron 0 */6 * * *"
               value={newSchedule}
               onChange={(e) => setNewSchedule(e.target.value)}
-              className="px-2 py-1 text-caption rounded-sm focus:outline-none flex-1 min-w-[200px] placeholder:text-[--text-muted]"
+              className="px-2 py-1 text-caption rounded-sm focus:outline-none flex-1 min-w-[100px] placeholder:text-[--text-muted]"
               style={{ background: "var(--bg-hover)", color: "var(--text-primary)", border: "1px solid var(--border)" }}
             />
           )}
@@ -283,7 +283,7 @@ export function TaskBar() {
             placeholder="Agent instructions per run..."
             value={newInstructions}
             onChange={(e) => setNewInstructions(e.target.value)}
-            className="px-2 py-1 text-caption rounded-sm focus:outline-none flex-1 min-w-[200px] placeholder:text-[--text-muted]"
+            className="px-2 py-1 text-caption rounded-sm focus:outline-none flex-1 min-w-[100px] placeholder:text-[--text-muted]"
             style={{ background: "var(--bg-hover)", color: "var(--text-primary)", border: "1px solid var(--border)" }}
           />
         </div>

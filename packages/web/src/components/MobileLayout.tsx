@@ -153,11 +153,12 @@ export function MobileLayout({
       className="flex flex-col h-screen"
       style={{ background: "var(--bg-surface)" }}
     >
-      {/* ---- Top nav bar (44px) ---- */}
+      {/* ---- Top nav bar (44px + safe area for standalone PWA) ---- */}
       <div
         className="flex items-center justify-between px-4 flex-shrink-0"
         style={{
           height: 44,
+          paddingTop: "env(safe-area-inset-top, 0px)",
           background: "var(--bg-primary)",
           borderBottom: "1px solid var(--border)",
         }}
@@ -230,7 +231,7 @@ export function MobileLayout({
         )}
 
         {screen === "cron-detail" && (
-          <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <CronDetail />
           </div>
         )}

@@ -31,18 +31,18 @@ export function IconRail({ onToggleTheme, onOpenSettings, theme }: IconRailProps
   return (
     <div
       className="flex flex-col items-center py-3 gap-2 h-full"
-      style={{ width: 68, background: "var(--bg-primary)", borderRight: "1px solid var(--border)" }}
+      style={{ width: 48, background: "var(--bg-primary)", borderRight: "1px solid var(--border)" }}
     >
       {/* Workspace icon */}
       <button
-        className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm hover:rounded-xl transition-all"
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs hover:rounded-xl transition-all"
         style={{ background: "#1264A3" }}
         title="BotsChat"
       >
         BC
       </button>
 
-      <div className="w-8 border-t my-1" style={{ borderColor: "var(--sidebar-divider)" }} />
+      <div className="w-7 border-t my-1" style={{ borderColor: "var(--sidebar-divider)" }} />
 
       {/* Home */}
       <RailIcon
@@ -115,7 +115,7 @@ export function IconRail({ onToggleTheme, onOpenSettings, theme }: IconRailProps
       {/* User avatar */}
       <button
         onClick={handleLogout}
-        className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold text-white mt-1"
+        className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold text-white mt-1"
         style={{ background: "#9B59B6" }}
         title={`${state.user?.displayName ?? state.user?.email} (click to logout)`}
       >
@@ -147,7 +147,7 @@ function RailIcon({
       )}
       <button
         onClick={onClick}
-        className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
+        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
           active ? "text-[--text-sidebar-active]" : "text-[--text-sidebar] hover:text-[--text-sidebar-active]"
         }`}
         style={active ? { background: "var(--sidebar-hover)" } : undefined}

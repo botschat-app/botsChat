@@ -70,6 +70,9 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("botschat_theme", theme);
+    // Sync PWA theme-color meta tag with current theme
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", theme === "dark" ? "#1A1D21" : "#FFFFFF");
   }, [theme]);
 
   // Persist active view (messages / automations)
@@ -783,7 +786,7 @@ export default function App() {
       <AppDispatchContext.Provider value={dispatch}>
         <div className="flex flex-col h-screen">
           <div className="flex flex-1 min-h-0">
-            {/* Icon Rail — fixed 68px, outside Group */}
+            {/* Icon Rail — fixed 48px, outside Group */}
             <IconRail onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} theme={theme} />
 
             {/* Resizable panels: Sidebar + Content */}
@@ -795,7 +798,7 @@ export default function App() {
               className="flex-1"
             >
               {/* Sidebar panel */}
-              <Panel id="sidebar" defaultSize="15%" minSize="8%" maxSize="30%">
+              <Panel id="sidebar" defaultSize="15%" minSize="5%" maxSize="30%">
                 {isAutomationsView ? <CronSidebar /> : <Sidebar />}
               </Panel>
 
@@ -817,7 +820,7 @@ export default function App() {
                         {/* JobList — conditional */}
                         {isBackgroundTask && (
                           <>
-                            <Panel id="joblist" defaultSize="15%" minSize="8%" maxSize="30%">
+                            <Panel id="joblist" defaultSize="15%" minSize="5%" maxSize="30%">
                               <JobList
                                 jobs={state.jobs}
                                 selectedJobId={state.selectedJobId}
@@ -837,7 +840,7 @@ export default function App() {
                         {state.activeThreadId && (
                           <>
                             <ResizeHandle />
-                            <Panel id="thread" defaultSize="28%" minSize="18%" maxSize="50%">
+                            <Panel id="thread" defaultSize="28%" minSize="10%" maxSize="50%">
                               <ThreadPanel sendMessage={sendMessage} />
                             </Panel>
                           </>
