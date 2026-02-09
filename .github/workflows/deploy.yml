@@ -35,7 +35,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Apply D1 migrations (remote)
-        run: npm run db:migrate:remote
+        uses: cloudflare/wrangler-action@v3
+        with:
+          command: d1 migrations apply botschat-db --remote --config wrangler.toml
+          workingDirectory: .
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
