@@ -116,28 +116,19 @@ export function OnboardingPage({ onSkip }: { onSkip: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Load or create pairing token
+  // Create a pairing token for the setup command.
+  // Note: GET /pairing-tokens only returns masked tokenPreview (security),
+  // so we always create a fresh token for onboarding display.
   useEffect(() => {
     let cancelled = false;
 
     async function ensurePairingToken() {
       setLoadingToken(true);
       try {
-        // Check existing tokens
-        const { tokens } = await pairingApi.list();
-        if (cancelled) return;
-
-        if (tokens.length > 0) {
-          dlog.info("Onboarding", `Found ${tokens.length} existing pairing tokens`);
-          const { token } = await pairingApi.create("Onboarding setup");
-          if (!cancelled) setPairingToken(token);
-        } else {
-          dlog.info("Onboarding", "No pairing tokens found, creating one");
-          const { token } = await pairingApi.create("Default");
-          if (!cancelled) setPairingToken(token);
-        }
+        const { token } = await pairingApi.create("Default");
+        if (!cancelled) setPairingToken(token);
       } catch (err) {
-        dlog.error("Onboarding", `Failed to get pairing token: ${err}`);
+        dlog.error("Onboarding", `Failed to create pairing token: ${err}`);
       } finally {
         if (!cancelled) setLoadingToken(false);
       }

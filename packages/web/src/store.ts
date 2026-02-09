@@ -155,15 +155,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, selectedChannelId: action.channelId, sessions: [], selectedSessionId: null, tasks: [], selectedTaskId: null, jobs: [], selectedJobId: null, messages: [] };
     case "SET_SESSIONS":
       return { ...state, sessions: action.sessions };
-    case "SELECT_SESSION":
+    case "SELECT_SESSION": {
+      const nextSessionKey = action.sessionKey ?? state.selectedSessionKey;
+      const sessionChanged = nextSessionKey !== state.selectedSessionKey;
       return {
         ...state,
         selectedSessionId: action.sessionId,
-        selectedSessionKey: action.sessionKey ?? state.selectedSessionKey,
-        messages: [],
-        activeThreadId: null,
-        threadMessages: [],
+        selectedSessionKey: nextSessionKey,
+        // Only clear messages when the session actually changes;
+        // otherwise keep whatever was already loaded to avoid the
+        // race where SELECT_SESSION arrives *after* SET_MESSAGES
+        // (e.g. session-list API returns after message-list API).
+        messages: sessionChanged ? [] : state.messages,
+        activeThreadId: sessionChanged ? null : state.activeThreadId,
+        threadMessages: sessionChanged ? [] : state.threadMessages,
       };
+    }
     case "ADD_SESSION":
       return { ...state, sessions: [...state.sessions, action.session] };
     case "REMOVE_SESSION":

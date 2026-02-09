@@ -9,15 +9,15 @@
   "theme_color": "#1A1D21",
   "icons": [
     {
-      "src": "/botschat-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/botschat-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/botschat-icon.svg",
+      "src": "/botschat-logo.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ]

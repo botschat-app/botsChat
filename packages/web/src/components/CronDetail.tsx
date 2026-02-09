@@ -541,6 +541,48 @@ function CronInfoAndContent({
 }) {
   const cronDetailVertLayout = useDefaultLayout({ id: "botschat-cron-detail-v" });
 
+  // Mobile drag-to-resize state
+  const [mobileInfoPct, setMobileInfoPct] = useState(40);
+  const mobileContainerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef({ startY: 0, startPct: 40 });
+
+  const onDragHandleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    dragRef.current.startY = e.touches[0].clientY;
+    dragRef.current.startPct = mobileInfoPct;
+    const onMove = (ev: TouchEvent) => {
+      ev.preventDefault();
+      if (!mobileContainerRef.current) return;
+      const h = mobileContainerRef.current.getBoundingClientRect().height;
+      const delta = ((ev.touches[0].clientY - dragRef.current.startY) / h) * 100;
+      setMobileInfoPct(Math.max(10, Math.min(70, dragRef.current.startPct + delta)));
+    };
+    const onEnd = () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+    };
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+  }, [mobileInfoPct]);
+
+  const onDragHandleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current.startY = e.clientY;
+    dragRef.current.startPct = mobileInfoPct;
+    const onMove = (ev: MouseEvent) => {
+      if (!mobileContainerRef.current) return;
+      const h = mobileContainerRef.current.getBoundingClientRect().height;
+      const delta = ((ev.clientY - dragRef.current.startY) / h) * 100;
+      setMobileInfoPct(Math.max(10, Math.min(70, dragRef.current.startPct + delta)));
+    };
+    const onEnd = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onEnd);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onEnd);
+  }, [mobileInfoPct]);
+
   // Shared info section content
   const infoSection = (
     <div className="h-full flex flex-col">
@@ -704,14 +746,44 @@ function CronInfoAndContent({
     </div>
   );
 
-  // Mobile: simple vertical stack (no resize)
+  // Mobile: vertical stack with draggable divider between info and content
   if (isMobile) {
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
-        {/* Info section — scrollable, max 40% of viewport height */}
-        <div className="flex-shrink-0 overflow-y-auto" style={{ maxHeight: "40vh", borderBottom: "1px solid var(--border)" }}>
+      <div ref={mobileContainerRef} className="flex-1 min-h-0 flex flex-col">
+        {/* Info section — draggable height when expanded, auto when collapsed */}
+        <div
+          className="flex-shrink-0 overflow-y-auto"
+          style={{
+            ...(infoExpanded ? { height: `${mobileInfoPct}%` } : {}),
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
           {infoSection}
         </div>
+        {/* Drag handle — only shown when info section is expanded */}
+        {infoExpanded && (
+          <div
+            className="flex-shrink-0 flex items-center justify-center touch-none select-none"
+            style={{
+              height: 20,
+              cursor: "row-resize",
+              background: "var(--bg-surface)",
+              borderBottom: "1px solid var(--border)",
+            }}
+            onTouchStart={onDragHandleTouchStart}
+            onMouseDown={onDragHandleMouseDown}
+          >
+            <div
+              className="rounded-full"
+              style={{
+                width: 36,
+                height: 4,
+                background: "var(--text-muted)",
+                opacity: 0.4,
+              }}
+            />
+          </div>
+        )}
         {/* History + output — takes remaining space */}
         <CronContentPanels cronJobs={state.cronJobs} selectedCronJobId={state.selectedCronJobId} handleSelectJob={handleSelectJob} mobile />
       </div>
