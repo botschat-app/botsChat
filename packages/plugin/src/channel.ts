@@ -1387,8 +1387,14 @@ async function handleTaskScanRequest(
           }
 
           let lastRun: { status: string; ts: number; summary?: string; durationMs?: number } | undefined;
-          // Prefer model from jobs.json (explicitly set by user), fallback to session detection
-          let detectedModel = job.model ?? "";
+          // Model: OpenClaw stores it in job.payload.model (agentTurn), not at job top level
+          const payloadModel =
+            job.payload && typeof job.payload === "object" && job.payload !== null
+              ? (job.payload as Record<string, unknown>).model
+              : undefined;
+          let detectedModel =
+            (typeof payloadModel === "string" && payloadModel.trim() ? payloadModel.trim() : "") ||
+            (job.model ?? "");
           if (job.state?.lastRunAtMs) {
             // 3-layer strategy to get last run output:
             //   Layer 1: run log JSONL → summary
@@ -1459,6 +1465,8 @@ async function handleTaskScanRequest(
             } catch { /* ignore */ }
           }
 
+          const modelValue = detectedModel && detectedModel.trim() ? detectedModel.trim() : "";
+          ctx.log?.info(`[${ctx.accountId}] Task scan job ${job.id} model="${modelValue}"`);
           scannedTasks.push({
             cronJobId: job.id,
             name: job.name ?? job.id,
@@ -1466,7 +1474,7 @@ async function handleTaskScanRequest(
             agentId: job.agentId ?? "",
             enabled: job.enabled !== false,
             instructions,
-            model: detectedModel || undefined,
+            model: modelValue,
             lastRun,
           });
         }
