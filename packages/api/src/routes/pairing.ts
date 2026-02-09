@@ -4,12 +4,15 @@ import { generateId, generatePairingToken } from "../utils/id.js";
 
 const pairing = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
-/** GET /api/pairing-tokens — list pairing tokens for the current user */
+/** GET /api/pairing-tokens — list active (non-revoked) pairing tokens for the current user */
 pairing.get("/", async (c) => {
   const userId = c.get("userId");
 
   const { results } = await c.env.DB.prepare(
-    "SELECT id, token, label, last_connected_at, created_at FROM pairing_tokens WHERE user_id = ? ORDER BY created_at DESC",
+    `SELECT id, token, label, last_connected_at, last_ip, connection_count, created_at
+     FROM pairing_tokens
+     WHERE user_id = ? AND revoked_at IS NULL
+     ORDER BY created_at DESC`,
   )
     .bind(userId)
     .all<{
@@ -17,17 +20,20 @@ pairing.get("/", async (c) => {
       token: string;
       label: string | null;
       last_connected_at: number | null;
+      last_ip: string | null;
+      connection_count: number;
       created_at: number;
     }>();
 
   return c.json({
     tokens: (results ?? []).map((r) => ({
       id: r.id,
-      // Show only last 8 chars for security
       token: r.token,
       tokenPreview: `bc_pat_...${r.token.slice(-8)}`,
       label: r.label,
       lastConnectedAt: r.last_connected_at,
+      lastIp: r.last_ip,
+      connectionCount: r.connection_count,
       createdAt: r.created_at,
     })),
   });
@@ -59,13 +65,14 @@ pairing.post("/", async (c) => {
   );
 });
 
-/** DELETE /api/pairing-tokens/:id — revoke a pairing token */
+/** DELETE /api/pairing-tokens/:id — soft-revoke a pairing token */
 pairing.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const tokenId = c.req.param("id");
 
+  // Soft-delete: set revoked_at instead of removing the row
   await c.env.DB.prepare(
-    "DELETE FROM pairing_tokens WHERE id = ? AND user_id = ?",
+    "UPDATE pairing_tokens SET revoked_at = unixepoch() WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
   )
     .bind(tokenId, userId)
     .run();

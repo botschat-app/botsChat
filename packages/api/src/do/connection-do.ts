@@ -36,11 +36,13 @@ export class ConnectionDO implements DurableObject {
     // Route: /gateway/:accountId — OpenClaw plugin connects here
     if (url.pathname.startsWith("/gateway/")) {
       // Extract and store userId from the gateway path
-      const userId = url.pathname.split("/gateway/")[1];
+      const userId = url.pathname.split("/gateway/")[1]?.split("?")[0];
       if (userId) {
         await this.state.storage.put("userId", userId);
       }
-      return this.handleOpenClawConnect(request);
+      // Check if the API worker already verified the token against D1
+      const preVerified = url.searchParams.get("verified") === "1";
+      return this.handleOpenClawConnect(request, preVerified);
     }
 
     // Route: /client/:sessionId — Browser client connects here
@@ -121,7 +123,7 @@ export class ConnectionDO implements DurableObject {
 
   // ---- Connection handlers ----
 
-  private handleOpenClawConnect(request: Request): Response {
+  private handleOpenClawConnect(request: Request, preVerified = false): Response {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
@@ -132,8 +134,10 @@ export class ConnectionDO implements DurableObject {
     // Accept with Hibernation API, tag as "openclaw"
     this.state.acceptWebSocket(server, ["openclaw"]);
 
-    // Store initial state: not yet authenticated
-    server.serializeAttachment({ authenticated: false, tag: "openclaw" });
+    // If the API worker already verified the token against D1, mark as
+    // pre-verified. The plugin still sends an auth message, which we'll
+    // fast-track through without re-validating the token.
+    server.serializeAttachment({ authenticated: false, tag: "openclaw", preVerified });
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -162,12 +166,14 @@ export class ConnectionDO implements DurableObject {
     ws: WebSocket,
     msg: Record<string, unknown>,
   ): Promise<void> {
-    const attachment = ws.deserializeAttachment() as { authenticated: boolean; tag: string } | null;
+    const attachment = ws.deserializeAttachment() as { authenticated: boolean; tag: string; preVerified?: boolean } | null;
 
     // Handle auth handshake
     if (msg.type === "auth") {
       const token = msg.token as string;
-      const isValid = await this.validatePairingToken(token);
+      // If the API worker already validated this token against D1, skip
+      // the DO-level check. Otherwise fall back to local validation.
+      const isValid = attachment?.preVerified || await this.validatePairingToken(token);
 
       if (isValid) {
         ws.serializeAttachment({ ...attachment, authenticated: true });

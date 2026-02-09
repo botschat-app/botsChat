@@ -11,6 +11,7 @@ import { models } from "./routes/models.js";
 import { pairing } from "./routes/pairing.js";
 import { sessions } from "./routes/sessions.js";
 import { upload } from "./routes/upload.js";
+import { setup } from "./routes/setup.js";
 
 // Re-export the Durable Object class so wrangler can find it
 export { ConnectionDO } from "./do/connection-do.js";
@@ -25,6 +26,7 @@ app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
 
 // ---- Public routes (no auth) ----
 app.route("/api/auth", auth);
+app.route("/api/setup", setup);
 
 // ---- Protected routes (require Bearer token) ----
 const protectedApp = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
@@ -232,9 +234,9 @@ app.all("/api/gateway/:connId", async (c) => {
       return c.json({ error: "Token required for gateway connection" }, 401);
     }
 
-    // Look up user by pairing token
+    // Look up user by pairing token (exclude revoked tokens)
     const row = await c.env.DB.prepare(
-      "SELECT user_id FROM pairing_tokens WHERE token = ?",
+      "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
     )
       .bind(token)
       .first<{ user_id: string }>();
@@ -244,18 +246,24 @@ app.all("/api/gateway/:connId", async (c) => {
     }
     userId = row.user_id;
 
-    // Update last_connected_at
+    // Update audit fields: last_connected_at, last_ip, connection_count
+    const clientIp = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
     await c.env.DB.prepare(
-      "UPDATE pairing_tokens SET last_connected_at = unixepoch() WHERE token = ?",
+      `UPDATE pairing_tokens
+       SET last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1
+       WHERE token = ?`,
     )
-      .bind(token)
+      .bind(clientIp, token)
       .run();
   }
 
   const doId = c.env.CONNECTION_DO.idFromName(userId);
   const stub = c.env.CONNECTION_DO.get(doId);
   const url = new URL(c.req.url);
+  // Pass verified userId to DO — the API worker already validated the token
+  // against D1 above, so DO can trust this.
   url.pathname = `/gateway/${userId}`;
+  url.searchParams.set("verified", "1");
   return stub.fetch(new Request(url.toString(), c.req.raw));
 });
 
