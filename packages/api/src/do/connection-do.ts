@@ -1,6 +1,7 @@
 import type { Env } from "../env.js";
 import { verifyToken, getJwtSecret } from "../utils/auth.js";
 import { generateId as generateIdUtil } from "../utils/id.js";
+import { randomUUID } from "../utils/uuid.js";
 
 /**
  * ConnectionDO — one Durable Object instance per BotsChat user.
@@ -150,7 +151,7 @@ export class ConnectionDO implements DurableObject {
     }
 
     const url = new URL(request.url);
-    const sessionId = url.pathname.split("/client/")[1] || crypto.randomUUID();
+    const sessionId = url.pathname.split("/client/")[1] || randomUUID();
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
@@ -607,7 +608,7 @@ export class ConnectionDO implements DurableObject {
         "image/webp": "webp",
       };
       const ext = extMap[contentType] ?? "png";
-      const key = `media/${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const key = `media/${userId}/${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
 
       // Upload to R2
       await this.env.MEDIA.put(key, body, {
@@ -636,7 +637,7 @@ export class ConnectionDO implements DurableObject {
   }): Promise<void> {
     try {
       const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
-      const id = opts.id ?? crypto.randomUUID();
+      const id = opts.id ?? randomUUID();
 
       // Extract threadId from sessionKey pattern: ....:thread:{threadId}
       let threadId = opts.threadId;
