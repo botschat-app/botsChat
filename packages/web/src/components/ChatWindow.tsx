@@ -5,6 +5,7 @@ import { MessageContent } from "./MessageContent";
 import { ModelSelect } from "./ModelSelect";
 import { SessionTabs } from "./SessionTabs";
 import { dlog } from "../debug-log";
+import { randomUUID } from "../utils/uuid";
 
 type ChatWindowProps = {
   sendMessage: (msg: WSMessage) => void;
@@ -229,7 +230,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     setSkillVersion((v) => v + 1);
 
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       sender: "user",
       text: `/model ${modelId}`,
       timestamp: Date.now(),
@@ -381,7 +382,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     }
 
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       sender: "user",
       text: trimmed,
       timestamp: Date.now(),
@@ -416,7 +417,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     if (!sessionKey) return;
     dlog.info("A2UI", `Action triggered: ${action}`);
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       sender: "user",
       text: action,
       timestamp: Date.now(),
@@ -448,7 +449,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     // Send the chosen label as a user message (show the readable label, not the
     // technical value, so the chat history reads naturally)
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       sender: "user",
       text: label,
       timestamp: Date.now(),
@@ -861,4 +862,3 @@ function ActionButton({
     </button>
   );
 }
-

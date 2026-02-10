@@ -28,6 +28,7 @@ import { useIsMobile } from "./hooks/useIsMobile";
 import { MobileLayout } from "./components/MobileLayout";
 import { dlog } from "./debug-log";
 import { gtagPageView } from "./analytics";
+import { randomUUID } from "./utils/uuid";
 
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialState, (init): AppState => {
@@ -483,7 +484,7 @@ export default function App() {
           // from the server when the user navigates to that session.
           if (!isCurrentSession(sessionKey)) break;
           const chatMsg: ChatMessage = {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             sender: "agent",
             text: msg.text as string,
             timestamp: Date.now(),
@@ -500,7 +501,7 @@ export default function App() {
         case "agent.media": {
           if (!isCurrentSession(sessionKey)) break;
           const mediaMsg: ChatMessage = {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             sender: "agent",
             text: (msg.caption as string) ?? "",
             mediaUrl: msg.mediaUrl as string,
@@ -518,7 +519,7 @@ export default function App() {
         case "agent.a2ui": {
           if (!isCurrentSession(sessionKey)) break;
           const a2uiMsg: ChatMessage = {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             sender: "agent",
             text: "",
             a2ui: msg.jsonl as string,
@@ -677,7 +678,7 @@ export default function App() {
     const token = getToken();
     if (!token) return;
 
-    const sessionId = crypto.randomUUID();
+    const sessionId = randomUUID();
     dlog.info("WS", `Connecting WebSocket (session=${sessionId.slice(0, 8)}...)`);
     const client = new BotsChatWSClient({
       userId: state.user.id,

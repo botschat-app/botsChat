@@ -4,6 +4,7 @@ import { messagesApi } from "../api";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { dlog } from "../debug-log";
+import { randomUUID } from "../utils/uuid";
 
 type ThreadPanelProps = {
   sendMessage: (msg: WSMessage) => void;
@@ -47,7 +48,7 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
     dlog.info("Thread", `Send reply: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { threadId: state.activeThreadId });
 
     const msg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       sender: "user",
       text: trimmed,
       timestamp: Date.now(),

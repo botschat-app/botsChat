@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { signMediaUrl, getJwtSecret } from "../utils/auth.js";
+import { randomUUID } from "../utils/uuid.js";
 
 export const upload = new Hono<{
   Bindings: Env;
@@ -38,7 +39,7 @@ upload.post("/", async (c) => {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "png";
   // SVG is excluded — it can contain <script> tags and is a known XSS vector
   const safeExt = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "ico"].includes(ext) ? ext : "png";
-  const filename = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${safeExt}`;
+  const filename = `${Date.now()}-${randomUUID().slice(0, 8)}.${safeExt}`;
   const key = `media/${userId}/${filename}`;
 
   // Upload to R2

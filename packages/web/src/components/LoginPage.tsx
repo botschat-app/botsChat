@@ -75,6 +75,9 @@ export function LoginPage() {
       }
       dlog.info("Auth", `${isRegister ? "Register" : "Login"} success — user ${res.id} (${res.email})`);
       handleAuthSuccess(res);
+      if (isRegister) {
+        localStorage.setItem("botschat_onboarding_dismissed", "1");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong";
       dlog.error("Auth", `${isRegister ? "Register" : "Login"} failed: ${message}`);
