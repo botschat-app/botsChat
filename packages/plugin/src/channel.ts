@@ -602,6 +602,21 @@ async function handleCloudMessage(
       await handleModelsRequest(ctx);
       break;
 
+    case "settings.defaultModel": {
+      const model = typeof msg.defaultModel === "string" ? msg.defaultModel.trim() : "";
+      if (model) {
+        ctx.log?.info(`[${ctx.accountId}] Setting OpenClaw default model to: ${model}`);
+        const result = await openclawConfigSetDefaultModel(model, ctx.log);
+        if (result.ok) {
+          const client = getCloudClient(ctx.accountId);
+          if (client?.connected) {
+            client.send({ type: "defaultModel.updated", model });
+          }
+        }
+      }
+      break;
+    }
+
     default:
       break;
   }
@@ -640,6 +655,33 @@ function parseScheduleToOpenClaw(schedule: string): { kind: string; everyMs?: nu
   }
 
   return null;
+}
+
+/**
+ * Run `openclaw config set agents.defaults.model.primary <model>` so the
+ * user's default model choice in BotsChat takes effect on the OpenClaw gateway.
+ */
+async function openclawConfigSetDefaultModel(
+  model: string,
+  log?: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<{ ok: boolean; error?: string }> {
+  if (!model || !model.trim()) return { ok: true };
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
+  const args = ["config", "set", "agents.defaults.model.primary", model.trim()];
+  log?.info(`Running: openclaw ${args.join(" ")}`);
+  try {
+    await execFileAsync("openclaw", args, {
+      timeout: 10_000,
+      env: { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` },
+    });
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log?.error(`openclaw config set default model failed: ${message}`);
+    return { ok: false, error: message };
+  }
 }
 
 /**
