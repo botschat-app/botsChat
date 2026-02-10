@@ -122,9 +122,7 @@ export default function App() {
         .then((user) => {
           dlog.info("Auth", `Logged in as ${user.email} (${user.id})`);
           dispatch({ type: "SET_USER", user });
-          if (user.settings?.defaultModel) {
-            dispatch({ type: "SET_DEFAULT_MODEL", model: user.settings.defaultModel });
-          }
+          // defaultModel comes from plugin via connection.status, not from user.settings
         })
         .catch((err) => {
           dlog.warn("Auth", `Auto-login failed: ${err}`);

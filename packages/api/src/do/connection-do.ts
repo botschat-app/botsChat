@@ -270,6 +270,15 @@ export class ConnectionDO implements DurableObject {
       );
     }
 
+    // Plugin applied BotsChat default model to OpenClaw config — update and broadcast
+    if (msg.type === "defaultModel.updated" && typeof msg.model === "string") {
+      this.defaultModel = msg.model;
+      await this.state.storage.put("defaultModel", this.defaultModel);
+      this.broadcastToBrowsers(
+        JSON.stringify({ type: "connection.status", openclawConnected: true, defaultModel: this.defaultModel, models: this.cachedModels }),
+      );
+    }
+
     // Handle job updates from plugin — persist and forward to browsers
     if (msg.type === "job.update") {
       await this.handleJobUpdate(msg);

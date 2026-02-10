@@ -104,11 +104,14 @@ protectedApp.get("/me", async (c) => {
       created_at: number;
     }>();
   if (!row) return c.json({ error: "User not found" }, 404);
+  const settings = JSON.parse(row.settings_json || "{}");
+  // defaultModel is not stored in D1 — it comes from the plugin (connection.status).
+  delete settings.defaultModel;
   return c.json({
     id: row.id,
     email: row.email,
     displayName: row.display_name,
-    settings: JSON.parse(row.settings_json || "{}"),
+    settings,
     createdAt: row.created_at,
   });
 });
@@ -117,6 +120,7 @@ protectedApp.patch("/me", async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json<{ defaultModel?: string }>();
 
+  // defaultModel is not stored in D1 — get/set only via plugin (connection.status / push).
   const existing = await c.env.DB.prepare(
     "SELECT settings_json FROM users WHERE id = ?",
   )
@@ -124,18 +128,36 @@ protectedApp.patch("/me", async (c) => {
     .first<{ settings_json: string }>();
 
   const settings = JSON.parse(existing?.settings_json || "{}");
-
-  if (body.defaultModel !== undefined) {
-    settings.defaultModel = body.defaultModel;
-  }
-
+  delete settings.defaultModel;
+  // Persist other settings (if any) to D1; defaultModel is never written.
   await c.env.DB.prepare(
     "UPDATE users SET settings_json = ? WHERE id = ?",
   )
     .bind(JSON.stringify(settings), userId)
     .run();
 
-  return c.json({ ok: true, settings });
+  if (body.defaultModel !== undefined) {
+    try {
+      const doId = c.env.CONNECTION_DO.idFromName(userId);
+      const stub = c.env.CONNECTION_DO.get(doId);
+      await stub.fetch(
+        new Request("https://internal/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "settings.defaultModel",
+            defaultModel: body.defaultModel ?? "",
+          }),
+        }),
+      );
+    } catch (err) {
+      console.error("Failed to push default model to OpenClaw:", err);
+    }
+  }
+
+  const outSettings = { ...settings };
+  delete outSettings.defaultModel;
+  return c.json({ ok: true, settings: outSettings });
 });
 
 // OpenClaw scan data — schedule/instructions/model cached in the ConnectionDO.
