@@ -1,6 +1,6 @@
 {
   "name": "@botschat/botschat",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "BotsChat channel plugin for OpenClaw — connects your OpenClaw agent to the BotsChat cloud platform",
   "type": "module",
   "main": "dist/index.js",
