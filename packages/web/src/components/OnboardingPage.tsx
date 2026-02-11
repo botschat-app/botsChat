@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { pairingApi, setupApi, type PairingToken } from "../api";
 import { useAppState } from "../store";
 import { dlog } from "../debug-log";
+import { E2eService } from "../e2e";
 
 /** Clipboard copy button with feedback */
 function CopyButton({ text }: { text: string }) {
@@ -78,6 +79,14 @@ export function OnboardingPage({ onSkip }: { onSkip: () => void }) {
   const [pairingToken, setPairingToken] = useState<string | null>(null);
   const [loadingToken, setLoadingToken] = useState(true);
 
+  // E2E password step
+  const [e2ePassword, setE2ePassword] = useState("");
+  const [e2eConfirm, setE2eConfirm] = useState("");
+  const [e2eRemember, setE2eRemember] = useState(true);
+  const [e2eReady, setE2eReady] = useState(false); // true after password is set
+  const [e2eError, setE2eError] = useState("");
+  const [e2eLoading, setE2eLoading] = useState(false);
+
   // Cloud URL — resolved by backend (smart priority), editable by user
   const [cloudUrl, setCloudUrl] = useState<string>(
     typeof window !== "undefined" ? window.location.origin : "https://console.botschat.app",
@@ -138,10 +147,32 @@ export function OnboardingPage({ onSkip }: { onSkip: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
+  // E2E password validation
+  const e2ePasswordValid = e2ePassword.length >= 6 && e2ePassword === e2eConfirm;
+
+  const handleE2eSubmit = async () => {
+    if (!e2ePasswordValid) return;
+    if (!state.user?.id) {
+      setE2eError("User not loaded yet. Please wait.");
+      return;
+    }
+    setE2eLoading(true);
+    setE2eError("");
+    try {
+      await E2eService.setPassword(e2ePassword, state.user.id, e2eRemember);
+      setE2eReady(true);
+    } catch (err) {
+      setE2eError("Failed to derive encryption key. Please try again.");
+    } finally {
+      setE2eLoading(false);
+    }
+  };
+
   const setupCommand = pairingToken
     ? `openclaw plugins install @botschat/botschat && \\
 openclaw config set channels.botschat.cloudUrl ${cloudUrl} && \\
 openclaw config set channels.botschat.pairingToken ${pairingToken} && \\
+openclaw config set channels.botschat.e2ePassword "${e2ePassword}" && \\
 openclaw config set channels.botschat.enabled true && \\
 openclaw gateway restart`
     : "Loading...";
@@ -220,14 +251,130 @@ openclaw gateway restart`
                 </span>
               </div>
 
-              {/* Step 1 */}
+              {/* Step 1: E2E Password (mandatory) */}
               <div className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <span
+                    className="inline-flex items-center justify-center w-6 h-6 rounded-full text-tiny font-bold text-white"
+                    style={{ background: e2eReady ? "var(--accent-green)" : "var(--bg-active)" }}
+                  >
+                    {e2eReady ? (
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : "1"}
+                  </span>
+                  <h3 className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
+                    Set your E2E encryption password
+                  </h3>
+                </div>
+
+                {!e2eReady ? (
+                  <div className="ml-8">
+                    <p className="text-caption mb-3" style={{ color: "var(--text-secondary)" }}>
+                      Your messages, prompts, and task results will be <strong>encrypted on this device</strong> before
+                      they leave — the server only stores ciphertext it cannot read.
+                    </p>
+
+                    {/* Architecture diagram */}
+                    <div className="mb-3 rounded-md overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                      <img
+                        src="/architecture.png"
+                        alt="BotsChat E2E Encryption Architecture"
+                        className="w-full"
+                        style={{ display: "block" }}
+                      />
+                    </div>
+                    <p className="text-caption mb-4" style={{ color: "var(--text-muted)" }}>
+                      Encryption keys are derived locally and never sent to the server.{" "}
+                      <a
+                        href="https://botschat.app/#features"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline"
+                        style={{ color: "var(--text-link)" }}
+                      >
+                        Learn more
+                      </a>
+                    </p>
+
+                    {/* Password inputs */}
+                    <div className="space-y-2.5">
+                      <input
+                        type="password"
+                        value={e2ePassword}
+                        onChange={(e) => setE2ePassword(e.target.value)}
+                        placeholder="E2E encryption password (min 6 chars)"
+                        className="w-full px-3 py-2 rounded-sm text-caption"
+                        style={{
+                          background: "var(--code-bg)",
+                          border: "1px solid var(--border)",
+                          color: "var(--text-primary)",
+                          outline: "none",
+                        }}
+                      />
+                      <input
+                        type="password"
+                        value={e2eConfirm}
+                        onChange={(e) => setE2eConfirm(e.target.value)}
+                        placeholder="Confirm password"
+                        className="w-full px-3 py-2 rounded-sm text-caption"
+                        style={{
+                          background: "var(--code-bg)",
+                          border: `1px solid ${e2eConfirm && e2ePassword !== e2eConfirm ? "var(--accent-red, #e53e3e)" : "var(--border)"}`,
+                          color: "var(--text-primary)",
+                          outline: "none",
+                        }}
+                      />
+                      {e2eConfirm && e2ePassword !== e2eConfirm && (
+                        <p className="text-caption" style={{ color: "var(--accent-red, #e53e3e)" }}>
+                          Passwords do not match.
+                        </p>
+                      )}
+
+                      {/* Remember checkbox */}
+                      <label className="flex items-center gap-2 text-caption" style={{ color: "var(--text-secondary)" }}>
+                        <input
+                          type="checkbox"
+                          checked={e2eRemember}
+                          onChange={(e) => setE2eRemember(e.target.checked)}
+                        />
+                        Remember on this device
+                      </label>
+
+                      {e2eError && (
+                        <p className="text-caption" style={{ color: "var(--accent-red, #e53e3e)" }}>{e2eError}</p>
+                      )}
+
+                      <button
+                        onClick={handleE2eSubmit}
+                        disabled={!e2ePasswordValid || e2eLoading}
+                        className="w-full py-2 font-bold text-caption text-white rounded-sm transition-colors"
+                        style={{
+                          background: e2ePasswordValid && !e2eLoading ? "var(--bg-active)" : "var(--bg-hover)",
+                          cursor: e2ePasswordValid && !e2eLoading ? "pointer" : "not-allowed",
+                          opacity: e2ePasswordValid && !e2eLoading ? 1 : 0.5,
+                        }}
+                      >
+                        {e2eLoading ? "Deriving key..." : "Set E2E Password & Continue"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-caption ml-8" style={{ color: "var(--accent-green)" }}>
+                    E2E encryption is active. Your encryption key has been derived.
+                  </p>
+                )}
+              </div>
+
+              {/* Step 2: Install command (only shown after E2E password set) */}
+              <div className="mb-6" style={{ opacity: e2eReady ? 1 : 0.4, pointerEvents: e2eReady ? "auto" : "none" }}>
                 <div className="flex items-center gap-2 mb-2">
                   <span
                     className="inline-flex items-center justify-center w-6 h-6 rounded-full text-tiny font-bold text-white"
                     style={{ background: "var(--bg-active)" }}
                   >
-                    1
+                    2
                   </span>
                   <h3 className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
                     Run this command on your OpenClaw machine
@@ -306,14 +453,14 @@ openclaw gateway restart`
                 </div>
               </div>
 
-              {/* Step 2 */}
-              <div className="mb-6">
+              {/* Step 3: Verify */}
+              <div className="mb-6" style={{ opacity: e2eReady ? 1 : 0.4, pointerEvents: e2eReady ? "auto" : "none" }}>
                 <div className="flex items-center gap-2 mb-2">
                   <span
                     className="inline-flex items-center justify-center w-6 h-6 rounded-full text-tiny font-bold text-white"
                     style={{ background: "var(--bg-active)" }}
                   >
-                    2
+                    3
                   </span>
                   <h3 className="text-body font-bold" style={{ color: "var(--text-primary)" }}>
                     Verify connection

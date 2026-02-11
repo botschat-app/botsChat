@@ -114,6 +114,13 @@ export const E2eService = {
   },
   
   /**
+   * Get the current E2E password (in memory). Returns null if not set.
+   */
+  getPassword(): string | null {
+    return currentPassword;
+  },
+
+  /**
    * Decrypt bytes (base64) -> Uint8Array.
    */
   async decryptBytes(ciphertextBase64: string, messageId: string): Promise<Uint8Array> {
