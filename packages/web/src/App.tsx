@@ -20,6 +20,7 @@ import { JobList } from "./components/JobList";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingPage } from "./components/OnboardingPage";
 import { ConnectionSettings } from "./components/ConnectionSettings";
+import { E2ESettings } from "./components/E2ESettings";
 import { DebugLogPanel } from "./components/DebugLogPanel";
 import { CronSidebar } from "./components/CronSidebar";
 import { CronDetail } from "./components/CronDetail";
@@ -27,6 +28,7 @@ import { ResizeHandle } from "./components/ResizeHandle";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { MobileLayout } from "./components/MobileLayout";
 import { dlog } from "./debug-log";
+import { E2eService } from "./e2e";
 import { gtagPageView } from "./analytics";
 
 export default function App() {
@@ -45,7 +47,7 @@ export default function App() {
   const creatingGeneralRef = useRef(false);
 
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"general" | "connection">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "connection" | "security">("general");
 
   // Track whether the initial channels fetch has completed (prevents onboarding flash)
   const [channelsLoadedOnce, setChannelsLoadedOnce] = useState(false);
@@ -365,12 +367,29 @@ export default function App() {
     let stale = false;
     messagesApi
       .list(state.user.id, state.selectedSessionKey)
-      .then(({ messages, replyCounts }) => {
+      .then(async ({ messages, replyCounts }) => {
         // Guard against stale responses when the user rapidly switches channels:
         // the cleanup function sets `stale = true` before the new effect runs.
-        if (!stale) {
-          dispatch({ type: "SET_MESSAGES", messages, replyCounts });
-        }
+        if (stale) return;
+
+        // Decrypt history if possible
+        const decryptedMessages = await Promise.all(messages.map(async (m) => {
+            if (m.encrypted && E2eService.hasKey()) {
+                try {
+                    // Use message ID as context ID (nonce source)
+                     const plaintext = await E2eService.decrypt(m.text, m.id);
+                     return { ...m, text: plaintext, isEncryptedLocked: false };
+                } catch (err) {
+                    console.warn(`Failed to decrypt message ${m.id}`, err);
+                    return { ...m, isEncryptedLocked: true };
+                }
+            } else if (m.encrypted) {
+                return { ...m, isEncryptedLocked: true };
+            }
+            return m;
+        }));
+
+        dispatch({ type: "SET_MESSAGES", messages: decryptedMessages as ChatMessage[], replyCounts });
       })
       .catch((err) => {
         console.error("Failed to load message history:", err);
@@ -944,6 +963,17 @@ export default function App() {
                 >
                   Connection
                 </button>
+                <button
+                  className="pb-2 text-caption font-bold transition-colors"
+                  style={{
+                    color: settingsTab === "security" ? "var(--text-primary)" : "var(--text-muted)",
+                    borderBottom: settingsTab === "security" ? "2px solid var(--bg-active)" : "2px solid transparent",
+                    marginBottom: "-1px",
+                  }}
+                  onClick={() => setSettingsTab("security")}
+                >
+                  Security
+                </button>
               </div>
 
               {/* Tab content — scrollable */}
@@ -990,6 +1020,10 @@ export default function App() {
 
                 {settingsTab === "connection" && (
                   <ConnectionSettings />
+                )}
+
+                {settingsTab === "security" && (
+                  <E2ESettings />
                 )}
               </div>
 

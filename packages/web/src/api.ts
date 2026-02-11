@@ -227,6 +227,8 @@ export type TaskScanEntry = {
   instructions: string;
   model: string;
   enabled: boolean;
+  encrypted?: boolean;
+  iv?: string;
 };
 
 export const tasksApi = {
@@ -258,6 +260,7 @@ export type Job = {
   durationMs: number | null;
   summary: string;
   time: string;
+  encrypted?: boolean;
 };
 
 export const jobsApi = {
@@ -276,6 +279,7 @@ export type MessageRecord = {
   mediaUrl?: string;
   a2ui?: string;
   threadId?: string;
+  encrypted?: boolean;
 };
 
 export const messagesApi = {

@@ -49,6 +49,8 @@ export function LoginPage() {
   }, [firebaseEnabled]);
 
   const emailEnabled = authConfig?.emailEnabled ?? true;
+  const configLoaded = authConfig !== null;
+  const hasAnyLoginMethod = configLoaded && (firebaseEnabled || emailEnabled);
 
   const handleAuthSuccess = (res: { id: string; email: string; displayName?: string; token: string; refreshToken?: string }) => {
     setToken(res.token);
@@ -148,8 +150,22 @@ export function LoginPage() {
               : "Sign in"}
           </h2>
 
+          {/* Loading: avoid showing empty card on first paint before config is loaded */}
+          {!configLoaded && (
+            <div className="py-8 text-center" style={{ color: "var(--text-muted)" }}>
+              <span className="text-body">Loading sign-in options…</span>
+            </div>
+          )}
+
+          {/* No methods available (e.g. misconfiguration) */}
+          {configLoaded && !hasAnyLoginMethod && (
+            <div className="py-4 text-caption" style={{ color: "var(--text-secondary)" }}>
+              Sign-in is not configured. Please contact support.
+            </div>
+          )}
+
           {/* OAuth buttons */}
-          {firebaseEnabled && (
+          {configLoaded && firebaseEnabled && (
             <>
               <div className="space-y-3">
                 {/* Google */}
@@ -198,7 +214,7 @@ export function LoginPage() {
               </div>
 
               {/* Divider — only show if email login is also available */}
-              {emailEnabled && (
+              {configLoaded && emailEnabled && (
                 <div className="flex items-center gap-3 my-5">
                   <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
                   <span className="text-caption" style={{ color: "var(--text-muted)" }}>
@@ -221,7 +237,7 @@ export function LoginPage() {
           )}
 
           {/* Email/password form — only in local/dev mode */}
-          {emailEnabled && (
+          {configLoaded && emailEnabled && (
             <>
               <form onSubmit={handleSubmit} className="space-y-4">
                 {isRegister && (
