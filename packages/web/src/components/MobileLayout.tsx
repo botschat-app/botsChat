@@ -10,6 +10,7 @@ import { CronSidebar } from "./CronSidebar";
 import { CronDetail } from "./CronDetail";
 import { ModelSelect } from "./ModelSelect";
 import { ConnectionSettings } from "./ConnectionSettings";
+import { E2ESettings } from "./E2ESettings";
 import { dlog } from "../debug-log";
 
 type MobileScreen =
@@ -371,7 +372,7 @@ function MobileSettingsModal({
   onClose: () => void;
   handleDefaultModelChange: (modelId: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"general" | "connection">("general");
+  const [tab, setTab] = useState<"general" | "connection" | "security">("general");
 
   return (
     <div
@@ -416,6 +417,17 @@ function MobileSettingsModal({
           >
             Connection
           </button>
+          <button
+            className="pb-2 text-caption font-bold transition-colors"
+            style={{
+              color: tab === "security" ? "var(--text-primary)" : "var(--text-muted)",
+              borderBottom: tab === "security" ? "2px solid var(--bg-active)" : "2px solid transparent",
+              marginBottom: "-1px",
+            }}
+            onClick={() => setTab("security")}
+          >
+            Security
+          </button>
         </div>
 
         {/* Tab content — scrollable */}
@@ -450,6 +462,10 @@ function MobileSettingsModal({
 
           {tab === "connection" && (
             <ConnectionSettings />
+          )}
+
+          {tab === "security" && (
+            <E2ESettings />
           )}
         </div>
 
