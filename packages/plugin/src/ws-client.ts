@@ -135,17 +135,21 @@ export class BotsChatCloudClient {
     switch (msg.type) {
       case "auth.ok":
         this.log("info", `Authenticated with BotsChat cloud (userId=${msg.userId}, hasE2ePwd=${!!this.opts.e2ePassword})`);
+        // Mark connected FIRST so that subsequent messages (task.scan.request,
+        // models.request) arriving while deriveKey is running can be processed.
+        this.backoffMs = MIN_BACKOFF_MS;
+        this.setConnected(true);
+        this.startPing();
+        // Derive E2E key AFTER marking connected (PBKDF2 is slow ~1-2s).
         if (msg.userId && this.opts.e2ePassword) {
             this.log("info", `Deriving E2E key for userId: ${msg.userId}`);
             try {
                 this.e2eKey = await deriveKey(this.opts.e2ePassword, msg.userId);
+                this.log("info", "E2E key derived successfully");
             } catch (err) {
                 this.log("error", `Failed to derive E2E key: ${err}`);
             }
         }
-        this.backoffMs = MIN_BACKOFF_MS;
-        this.setConnected(true);
-        this.startPing();
         break;
       case "auth.fail":
         this.log("error", `Authentication failed: ${msg.reason}`);

@@ -52,6 +52,12 @@ export default function App() {
   // Track whether the initial channels fetch has completed (prevents onboarding flash)
   const [channelsLoadedOnce, setChannelsLoadedOnce] = useState(false);
 
+  // Track E2E key readiness — when key becomes available, re-decrypt messages
+  const [e2eReady, setE2eReady] = useState(E2eService.hasKey());
+  useEffect(() => {
+    return E2eService.subscribe(() => setE2eReady(E2eService.hasKey()));
+  }, []);
+
   // Responsive layout hooks (must be called unconditionally)
   const isMobile = useIsMobile();
   const mainLayout = useDefaultLayout({ id: "botschat-main" });
@@ -395,7 +401,7 @@ export default function App() {
         console.error("Failed to load message history:", err);
       });
     return () => { stale = true; };
-  }, [state.user, state.selectedSessionKey]);
+  }, [state.user, state.selectedSessionKey, e2eReady]);
 
   // Keep a ref to state for use in WS handler (avoids stale closures)
   const stateRef = useRef(state);

@@ -1,14 +1,20 @@
 import { deriveKey, encryptText, decryptText, toBase64, fromBase64 } from "e2e-crypto";
 
-const STORAGE_KEY = "botschat_e2e_pwd_cache"; // Stores encrypted password? Or password itself?
-// For MVP, plan says: "Remember on this device" -> store password in localStorage (implicit risk acceptable for user convenience).
-// Actually, storing password in localStorage is common for "Remember Me" if we don't have better key storage.
-// We can store a hash? No, we need the password to derive the key.
-// So we store the password.
+const STORAGE_KEY = "botschat_e2e_pwd_cache";
+const KEY_CACHE_KEY = "botschat_e2e_key_cache"; // base64-encoded derived key
 
 let currentKey: Uint8Array | null = null;
 let currentPassword: string | null = null;
 const listeners: Set<() => void> = new Set();
+
+// Try to restore cached key immediately (synchronous, no PBKDF2)
+try {
+  const cachedKey = localStorage.getItem(KEY_CACHE_KEY);
+  if (cachedKey) {
+    currentKey = fromBase64(cachedKey);
+    currentPassword = localStorage.getItem(STORAGE_KEY);
+  }
+} catch { /* ignore */ }
 
 export const E2eService = {
   /**
@@ -28,13 +34,14 @@ export const E2eService = {
 
   /**
    * Set the E2E password and derive the key.
-   * Optionally persist the password to localStorage.
+   * Optionally persist the password and derived key to localStorage.
    */
   async setPassword(password: string, userId: string, remember: boolean): Promise<void> {
     if (!password) {
       currentKey = null;
       currentPassword = null;
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(KEY_CACHE_KEY);
       this.notify();
       return;
     }
@@ -44,8 +51,10 @@ export const E2eService = {
       currentPassword = password;
       if (remember) {
         localStorage.setItem(STORAGE_KEY, password);
+        localStorage.setItem(KEY_CACHE_KEY, toBase64(currentKey));
       } else {
         localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(KEY_CACHE_KEY);
       }
       this.notify();
     } catch (err) {
@@ -61,6 +70,7 @@ export const E2eService = {
     currentKey = null;
     currentPassword = null;
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(KEY_CACHE_KEY);
     this.notify();
   },
 
@@ -79,9 +89,13 @@ export const E2eService = {
   },
 
   /**
-   * Try to load the password from storage and derive key.
+   * Try to load the key from cache or derive from saved password.
+   * Cache path is synchronous (already done at module load).
+   * Derive path is async (PBKDF2).
    */
   async loadSavedPassword(userId: string): Promise<boolean> {
+    // Already loaded from cache at module init
+    if (currentKey) return true;
     const pwd = localStorage.getItem(STORAGE_KEY);
     if (!pwd) return false;
     try {
@@ -112,7 +126,7 @@ export const E2eService = {
     const ciphertext = fromBase64(ciphertextBase64);
     return decryptText(currentKey, ciphertext, messageId);
   },
-  
+
   /**
    * Get the current E2E password (in memory). Returns null if not set.
    */
@@ -126,7 +140,6 @@ export const E2eService = {
   async decryptBytes(ciphertextBase64: string, messageId: string): Promise<Uint8Array> {
     if (!currentKey) throw new Error("E2E key not set");
     const ciphertext = fromBase64(ciphertextBase64);
-    // decryptText returns string; re-encode to bytes
     const plainStr = await decryptText(currentKey, ciphertext, messageId);
     return new TextEncoder().encode(plainStr);
   }

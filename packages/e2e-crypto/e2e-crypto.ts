@@ -130,16 +130,37 @@ async function decryptWeb(
 }
 
 // ---------------------------------------------------------------------------
-// Node.js implementation
+// Node.js implementation — use static imports resolved at load time.
+// Dynamic `await import("node:crypto")` hangs in some extension loaders
+// (e.g. OpenClaw gateway), so we resolve the modules eagerly when isNode.
 // ---------------------------------------------------------------------------
+
+// Node.js crypto modules — loaded eagerly.
+// We use a global cache keyed by "__e2e_crypto" to avoid re-importing
+// in environments where the module may be loaded multiple times.
+let _nodeCrypto: typeof import("node:crypto") | null = null;
+let _nodeUtil: typeof import("node:util") | null = null;
+
+const _g = globalThis as Record<string, unknown>;
+if (isNode && _g.__e2e_nodeCrypto) {
+  _nodeCrypto = _g.__e2e_nodeCrypto as typeof import("node:crypto");
+  _nodeUtil = _g.__e2e_nodeUtil as typeof import("node:util");
+}
+
+async function ensureNodeModules(): Promise<void> {
+  if (_nodeCrypto && _nodeUtil) return;
+  _nodeCrypto = await import("node:crypto");
+  _nodeUtil = await import("node:util");
+  _g.__e2e_nodeCrypto = _nodeCrypto;
+  _g.__e2e_nodeUtil = _nodeUtil;
+}
 
 async function deriveKeyNode(
   password: string,
   userId: string,
 ): Promise<Uint8Array> {
-  const { pbkdf2 } = await import("node:crypto");
-  const { promisify } = await import("node:util");
-  const pbkdf2Async = promisify(pbkdf2);
+  await ensureNodeModules();
+  const pbkdf2Async = _nodeUtil!.promisify(_nodeCrypto!.pbkdf2);
   const salt = SALT_PREFIX + userId;
   const buf = await pbkdf2Async(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH, "sha256");
   return new Uint8Array(buf);
@@ -149,12 +170,12 @@ async function hkdfNonceNode(
   key: Uint8Array,
   contextId: string,
 ): Promise<Uint8Array> {
-  const { createHmac } = await import("node:crypto");
+  await ensureNodeModules();
   const info = utf8Encode("nonce-" + contextId);
   const input = new Uint8Array(info.length + 1);
   input.set(info);
   input[info.length] = 0x01;
-  const hmac = createHmac("sha256", Buffer.from(key));
+  const hmac = _nodeCrypto!.createHmac("sha256", Buffer.from(key));
   hmac.update(Buffer.from(input));
   const full = hmac.digest();
   return new Uint8Array(full.buffer, full.byteOffset, NONCE_LENGTH);
@@ -165,9 +186,9 @@ async function encryptNode(
   plaintext: Uint8Array,
   contextId: string,
 ): Promise<Uint8Array> {
-  const { createCipheriv } = await import("node:crypto");
+  await ensureNodeModules();
   const iv = await hkdfNonceNode(key, contextId);
-  const cipher = createCipheriv(
+  const cipher = _nodeCrypto!.createCipheriv(
     "aes-256-ctr",
     Buffer.from(key),
     Buffer.from(iv),
@@ -181,9 +202,9 @@ async function decryptNode(
   ciphertext: Uint8Array,
   contextId: string,
 ): Promise<Uint8Array> {
-  const { createDecipheriv } = await import("node:crypto");
+  await ensureNodeModules();
   const iv = await hkdfNonceNode(key, contextId);
-  const decipher = createDecipheriv(
+  const decipher = _nodeCrypto!.createDecipheriv(
     "aes-256-ctr",
     Buffer.from(key),
     Buffer.from(iv),
