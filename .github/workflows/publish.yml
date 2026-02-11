@@ -39,6 +39,11 @@ jobs:
 
       - name: Build web
         run: npm run build -w packages/web
+        env:
+          VITE_FIREBASE_API_KEY: AIzaSyA8NdosgijoZoOSTHoRY4XA5WH-58OF3Yk
+          VITE_FIREBASE_AUTH_DOMAIN: botschat-130ff.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: botschat-130ff
+          VITE_GA_MEASUREMENT_ID: G-HKJNG1X0JE
 
       - name: Publish plugin
         run: npm publish -w packages/plugin --access public
