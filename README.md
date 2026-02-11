@@ -4,9 +4,9 @@
 [![npm](https://img.shields.io/npm/v/@botschat/botschat)](https://www.npmjs.com/package/@botschat/botschat)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-A self-hosted chat interface for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
+A self-hosted, **end-to-end encrypted** chat interface for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
-BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw agents — organize conversations into **Channels**, schedule **Background Tasks**, and monitor **Job** executions. Everything runs on your own infrastructure; your API keys and data never leave your machine.
+BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw agents — organize conversations into **Channels**, schedule **Background Tasks**, and monitor **Job** executions. With **E2E encryption**, your chat messages, cron prompts, and job summaries are encrypted on your device before they ever leave — the server only sees ciphertext it cannot decrypt. Your API keys and data never leave your machine.
 
 ## Key Features
 
@@ -34,6 +34,15 @@ Schedule **cron-style background tasks** that run your agents on autopilot. Each
 
 ![Background Task — Schedule, prompt, and execution history](docs/cron.png)
 
+### End-to-End Encryption
+
+BotsChat supports **optional E2E encryption** so the server never sees your content in plaintext:
+
+- **What's encrypted**: Chat messages, cron task prompts, and job execution summaries — all encrypted with AES-256-CTR before leaving your browser or plugin.
+- **Zero-knowledge server**: The BotsChat cloud/server stores only ciphertext and cannot decrypt your data. No keys, no salts stored server-side.
+- **How it works**: You set an E2E password in both the web UI and the OpenClaw plugin. Both sides derive the same encryption key using `PBKDF2(password, userId)`. Messages are encrypted/decrypted locally — the server just relays and stores opaque bytes.
+- **Zero overhead**: AES-CTR produces ciphertext the same size as plaintext — no bloat, no padding.
+
 ### Built-in Debug Log
 
 A collapsible **Debug Log** panel at the bottom of the UI gives you real-time visibility into what's happening under the hood — WebSocket events, cron task loading, agent scan results, and more. Filter by log level (ALL, WS, WST, API, INF, WRN, ERR) to quickly diagnose issues without leaving the chat interface.
@@ -46,7 +55,9 @@ A collapsible **Debug Log** panel at the bottom of the UI gives you real-time vi
 
 ![BotsChat Architecture](docs/architecture.png)
 
-OpenClaw runs your agents locally (with your API keys, data, and configs). The BotsChat plugin establishes an **outbound WebSocket** to the BotsChat server — no port forwarding, no tunnels. Your API keys and data never leave your machine; only chat messages travel through the relay.
+OpenClaw runs your agents locally (with your API keys, data, and configs). The BotsChat plugin establishes an **outbound WebSocket** to the BotsChat server — no port forwarding, no tunnels. Your API keys and data never leave your machine.
+
+When **E2E encryption** is enabled, messages are encrypted on the sender's device (browser or plugin) before transmission. The BotsChat server (ConnectionDO) only relays and stores opaque ciphertext — it has no access to keys and cannot read your content. Encryption keys are derived locally from your password and never sent over the network.
 
 You can run BotsChat locally on the same machine, or deploy it to Cloudflare for remote access (e.g. from your phone).
 
@@ -92,7 +103,7 @@ Pick one below and follow its steps, then continue to [Install the OpenClaw Plug
 
 We run the same open-source stack at **[console.botschat.app](https://console.botschat.app)**. No clone, no deploy: open the link → sign up → create a pairing token → connect OpenClaw.
 
-Your API keys and data still stay on your machine; the hosted console only relays chat messages via WebSocket.
+Your API keys and data still stay on your machine; the hosted console only relays chat messages via WebSocket. Enable **E2E encryption** for complete privacy — the hosted console cannot decrypt your content.
 
 → Then go to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
 
@@ -190,6 +201,14 @@ openclaw config set channels.botschat.pairingToken <YOUR_PAIRING_TOKEN>
 openclaw config set channels.botschat.enabled true
 ```
 
+**3b. (Optional) Enable E2E encryption**
+
+Set the same password you'll use in the BotsChat web UI:
+
+```bash
+openclaw config set channels.botschat.e2ePassword "your-secret-e2e-password"
+```
+
 This writes the following to your `~/.openclaw/openclaw.json`:
 
 ```json
@@ -198,7 +217,8 @@ This writes the following to your `~/.openclaw/openclaw.json`:
     "botschat": {
       "enabled": true,
       "cloudUrl": "http://localhost:8787",
-      "pairingToken": "bc_pat_xxxxxxxxxxxxxxxx"
+      "pairingToken": "bc_pat_xxxxxxxxxxxxxxxx",
+      "e2ePassword": "your-secret-e2e-password"
     }
   }
 }
@@ -225,6 +245,7 @@ Open the BotsChat web UI in your browser, sign in, and start chatting with your 
 2. This WebSocket stays connected (with automatic reconnection if it drops).
 3. When you type a message in the web UI, it travels: **Browser → ConnectionDO → WebSocket → OpenClaw → Agent → response back through the same path**.
 4. Your API keys, agent configs, and data never leave your machine — only chat messages travel through the relay.
+5. With **E2E encryption** enabled, messages are encrypted **before** step 3 and decrypted **after** — the ConnectionDO and database only ever see ciphertext.
 
 ## Plugin Reference
 
@@ -237,6 +258,7 @@ All config lives under `channels.botschat` in your `openclaw.json`:
 | `enabled`       | boolean | no       | Enable/disable the channel (default: true)           |
 | `cloudUrl`      | string  | yes      | BotsChat server URL (e.g. `http://localhost:8787`)   |
 | `pairingToken`  | string  | yes      | Your pairing token from the BotsChat dashboard       |
+| `e2ePassword`   | string  | no       | E2E encryption password (must match the web UI)      |
 | `name`          | string  | no       | Display name for this connection                     |
 
 ### Message Protocol

@@ -1,10 +1,12 @@
 import WebSocket from "ws";
+import { deriveKey } from "e2e-crypto";
 import type { CloudInbound, CloudOutbound } from "./types.js";
 
 export type BotsChatCloudClientOptions = {
   cloudUrl: string;
   accountId: string;
   pairingToken: string;
+  e2ePassword?: string;
   agentIds?: string[];
   /** Current agent model name (e.g. "claude-opus-4-6") — sent with auth and status pings */
   getModel?: () => string | undefined;
@@ -37,6 +39,7 @@ export class BotsChatCloudClient {
   private backoffMs = MIN_BACKOFF_MS;
   private intentionalClose = false;
   private _connected = false;
+  public e2eKey: Uint8Array | null = null;
 
   constructor(private opts: BotsChatCloudClientOptions) {}
 
@@ -78,7 +81,7 @@ export class BotsChatCloudClient {
     this.ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString()) as CloudInbound;
-        this.handleMessage(msg);
+        void this.handleMessage(msg);
       } catch (err) {
         this.log("error", `Failed to parse message: ${err}`);
       }
@@ -128,10 +131,18 @@ export class BotsChatCloudClient {
 
   // ---- internal ----
 
-  private handleMessage(msg: CloudInbound): void {
+  private async handleMessage(msg: CloudInbound): Promise<void> {
     switch (msg.type) {
       case "auth.ok":
-        this.log("info", "Authenticated with BotsChat cloud");
+        this.log("info", `Authenticated with BotsChat cloud (userId=${msg.userId}, hasE2ePwd=${!!this.opts.e2ePassword})`);
+        if (msg.userId && this.opts.e2ePassword) {
+            this.log("info", `Deriving E2E key for userId: ${msg.userId}`);
+            try {
+                this.e2eKey = await deriveKey(this.opts.e2ePassword, msg.userId);
+            } catch (err) {
+                this.log("error", `Failed to derive E2E key: ${err}`);
+            }
+        }
         this.backoffMs = MIN_BACKOFF_MS;
         this.setConnected(true);
         this.startPing();

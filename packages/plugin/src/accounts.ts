@@ -53,6 +53,7 @@ export function resolveBotsChatAccount(
       name: s.name,
       cloudUrl: s.cloudUrl,
       pairingToken: s.pairingToken,
+      e2ePassword: s.e2ePassword,
     };
   } else {
     acct = s.accounts[id];

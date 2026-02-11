@@ -14,6 +14,7 @@ export type ChatMessage = {
   isStreaming?: boolean; // true while streaming is in progress
   /** Tracks which action blocks have been resolved, keyed by prompt hash */
   resolvedActions?: Record<string, { value: string; label: string }>;
+  isEncryptedLocked?: boolean;
 };
 
 export type ActiveView = "messages" | "automations";

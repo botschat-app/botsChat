@@ -1,0 +1,8 @@
+{
+  "name": "e2e-crypto",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "e2e-crypto.ts",
+  "types": "e2e-crypto.ts"
+}

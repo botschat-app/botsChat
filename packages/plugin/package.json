@@ -30,7 +30,8 @@
     "openclaw": "*"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "e2e-crypto": "*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.0",
