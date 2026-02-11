@@ -50,6 +50,7 @@ export class BotsChatWSClient {
         const msg = JSON.parse(evt.data) as WSMessage;
         
         // Handle E2E Decryption
+        console.log(`[E2E-WS] msg.type=${msg.type} encrypted=${msg.encrypted} hasKey=${E2eService.hasKey()} messageId=${msg.messageId}`);
         if (msg.encrypted && E2eService.hasKey()) {
            try {
              if (msg.type === "agent.text" || msg.type === "agent.media") {
@@ -102,8 +103,10 @@ export class BotsChatWSClient {
           
           // Try to load E2E password
           const userId = msg.userId as string;
-          if (userId) {
-              await E2eService.loadSavedPassword(userId);
+          console.log(`[E2E-WS] auth.ok userId=${userId}, hasSavedPwd=${E2eService.hasSavedPassword()}`);
+          if (userId && E2eService.hasSavedPassword()) {
+              const loaded = await E2eService.loadSavedPassword(userId);
+              console.log(`[E2E-WS] loadSavedPassword result=${loaded}, hasKey=${E2eService.hasKey()}`);
           }
           
           this.backoffMs = 1000;

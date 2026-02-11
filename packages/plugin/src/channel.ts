@@ -126,14 +126,17 @@ export const botschatPlugin = {
       let text = ctx.text;
       let encrypted = false;
 
+      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}`);
+
       if (client.e2eKey) {
         try {
           // Encrypt text using messageId as contextId
           const ciphertext = await encryptText(client.e2eKey, text, messageId);
           text = toBase64(ciphertext);
           encrypted = true;
+          console.log(`[botschat][sendText] encrypted OK, ctLen=${text.length}`);
         } catch (err) {
-            // Log error but proceed? Or fail? The user expects encryption.
+            console.error(`[botschat][sendText] Encryption FAILED:`, err);
             return { ok: false, error: new Error(`Encryption failed: ${err}`) };
         }
       }
@@ -147,6 +150,7 @@ export const botschatPlugin = {
         messageId,
         encrypted,
       });
+      console.log(`[botschat][sendText] sent agent.text, encrypted=${encrypted}`);
       return { ok: true };
     },
 
@@ -439,10 +443,10 @@ async function handleCloudMessage(
         // pass through the command-auth pipeline instead of being silently
         // dropped (the default is false / deny).
         const msgCtx: Record<string, unknown> = {
-          Body: msg.text,
-          RawBody: msg.text,
-          CommandBody: msg.text,
-          BodyForCommands: msg.text,
+          Body: text,
+          RawBody: text,
+          CommandBody: text,
+          BodyForCommands: text,
           From: `botschat:${msg.userId}`,
           To: msg.sessionKey,
           SessionKey: msg.sessionKey,
@@ -477,22 +481,48 @@ async function handleCloudMessage(
 
       // Create a reply dispatcher that sends responses back through the cloud WSS
       const client = getCloudClient(ctx.accountId);
+      console.log(`[botschat] client for accountId=${ctx.accountId}: connected=${client?.connected}`);
       const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        if (!client?.connected) return;
+        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}`);
+        if (!client?.connected) { console.log("[botschat][deliver] SKIP - not connected"); return; }
+        const messageId = crypto.randomUUID();
+        let text = payload.text ?? "";
+        let caption = payload.text ?? "";
+        let encrypted = false;
+
+        if (client.e2eKey && text) {
+          try {
+            const ct = await encryptText(client.e2eKey, text, messageId);
+            text = toBase64(ct);
+            caption = text;
+            encrypted = true;
+            console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}, encrypted=${encrypted}`);
+          } catch (err) {
+            console.error("[botschat][deliver] E2E encrypt failed:", err);
+          }
+        } else {
+          console.log(`[botschat][deliver] no encryption: hasKey=${!!client.e2eKey}, textLen=${text.length}`);
+        }
+
+        console.log(`[botschat][deliver] sending: type=${payload.mediaUrl ? "agent.media" : "agent.text"}, encrypted=${encrypted}, messageId=${messageId}`);
         if (payload.mediaUrl) {
           client.send({
             type: "agent.media",
             sessionKey: msg.sessionKey,
             mediaUrl: payload.mediaUrl,
-            caption: payload.text,
+            caption: encrypted ? caption : payload.text,
             threadId,
+            messageId,
+            encrypted,
           });
         } else if (payload.text) {
           client.send({
             type: "agent.text",
             sessionKey: msg.sessionKey,
-            text: payload.text,
+            text,
             threadId,
+            messageId,
+            encrypted,
           });
           // Detect model-change confirmations and emit model.changed
           // Handles both formats:

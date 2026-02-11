@@ -290,6 +290,9 @@ export class ConnectionDO implements DurableObject {
     }
 
     // Forward all messages to browser clients
+    if (msg.type === "agent.text") {
+      console.log(`[DO] Forwarding agent.text to browsers: encrypted=${msg.encrypted}, messageId=${msg.messageId}, textLen=${typeof msg.text === "string" ? msg.text.length : "?"}`);
+    }
     this.broadcastToBrowsers(JSON.stringify(msg));
   }
 
