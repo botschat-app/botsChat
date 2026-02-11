@@ -14,6 +14,7 @@ export type ChatMessage = {
   isStreaming?: boolean; // true while streaming is in progress
   /** Tracks which action blocks have been resolved, keyed by prompt hash */
   resolvedActions?: Record<string, { value: string; label: string }>;
+  isEncryptedLocked?: boolean;
 };
 
 export type ActiveView = "messages" | "automations";
@@ -302,12 +303,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
     case "SET_OPENCLAW_CONNECTED":
-      // connection.status carries the global defaultModel from OpenClaw config.
-      // It never touches sessionModel — that's per-session and managed separately.
+      // connection.status carries the gateway defaultModel (OpenClaw primary).
+      // Prefer user's saved default (from API/settings); only use gateway default when user has not set one.
       return {
         ...state,
         openclawConnected: action.connected,
-        defaultModel: action.defaultModel ?? state.defaultModel,
+        defaultModel: state.defaultModel ?? action.defaultModel ?? null,
       };
     case "SET_SESSION_MODEL":
       return { ...state, sessionModel: action.model };

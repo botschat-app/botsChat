@@ -9,6 +9,7 @@ export type BotsChatAccountConfig = {
   name?: string;
   cloudUrl?: string; // e.g. "console.botschat.app"
   pairingToken?: string; // e.g. "bc_pat_xxxxxxxx"
+  e2ePassword?: string; // E2E encryption password (optional)
 };
 
 /** Resolved account ready for runtime use */
@@ -45,6 +46,8 @@ export type CloudOutbound =
       text: string;
       replyToId?: string;
       threadId?: string;
+      encrypted?: boolean;
+      messageId?: string;
     }
   | {
       type: "agent.media";
@@ -53,6 +56,8 @@ export type CloudOutbound =
       caption?: string;
       replyToId?: string;
       threadId?: string;
+      encrypted?: boolean;
+      messageId?: string;
     }
   | { type: "agent.stream.start"; sessionKey: string; runId: string }
   | {
@@ -68,6 +73,7 @@ export type CloudOutbound =
       jsonl: string;
       replyToId?: string;
       threadId?: string;
+      encrypted?: boolean;
     }
   | { type: "status"; connected: boolean; agents: string[]; model?: string }
   | { type: "pong" }
@@ -83,6 +89,8 @@ export type CloudOutbound =
         instructions: string;
         model?: string;
         lastRun?: { status: string; ts: number; summary?: string };
+        encrypted?: boolean;
+        iv?: string;
       }>;
     }
   // Job update — plugin reports a cron job execution result
@@ -96,6 +104,7 @@ export type CloudOutbound =
       startedAt: number;
       finishedAt?: number;
       durationMs?: number;
+      encrypted?: boolean;
     }
   // Job output — streaming text output while a job is running
   | {
@@ -110,11 +119,13 @@ export type CloudOutbound =
   // Models list — plugin reports available providers/models
   | { type: "models.list"; models: Array<{ id: string; name: string; provider: string }> }
   // Model changed — plugin notifies that /model command switched the active model
-  | { type: "model.changed"; model: string; sessionKey: string };
+  | { type: "model.changed"; model: string; sessionKey: string }
+  // Default model updated — plugin applied BotsChat default model to OpenClaw config
+  | { type: "defaultModel.updated"; model: string };
 
 /** Cloud → Plugin (inbound, user messages) */
 export type CloudInbound =
-  | { type: "auth.ok" }
+  | { type: "auth.ok"; userId?: string }
   | { type: "auth.fail"; reason: string }
   | {
       type: "user.message";
@@ -171,6 +182,8 @@ export type CloudInbound =
   // Task scan request — cloud asks plugin to scan existing cron jobs
   | { type: "task.scan.request" }
   // Models request — cloud asks plugin for available models/providers
-  | { type: "models.request" };
+  | { type: "models.request" }
+  // Default model — cloud pushes user's default model so plugin applies it in OpenClaw config
+  | { type: "settings.defaultModel"; defaultModel: string };
 
 export type CloudMessage = CloudOutbound | CloudInbound;

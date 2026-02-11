@@ -1,6 +1,6 @@
 {
   "name": "botschat",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "description": "A self-hosted chat interface for OpenClaw AI agents",
   "workspaces": [
     "packages/*"
@@ -15,7 +15,9 @@
     "db:migrate": "wrangler d1 migrations apply botschat-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply botschat-db --remote",
     "typecheck": "tsc --noEmit",
-    "build:plugin": "npm run build -w packages/plugin"
+    "build:plugin": "npm run build -w packages/plugin",
+    "test:e2e": "npx tsx scripts/verify-e2e.ts && npx tsx packages/e2e-crypto/e2e-crypto.test.ts",
+    "test:e2e-db": "npx tsx scripts/verify-e2e-db.ts"
   },
   "files": [
     "packages/api/src/",

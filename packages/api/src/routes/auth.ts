@@ -287,11 +287,14 @@ auth.get("/me", async (c) => {
 
   if (!row) return c.json({ error: "User not found" }, 404);
 
+  const settings = JSON.parse(row.settings_json || "{}");
+  delete settings.defaultModel; // not in D1 — comes from plugin (connection.status)
+
   return c.json({
     id: row.id,
     email: row.email,
     displayName: row.display_name,
-    settings: JSON.parse(row.settings_json || "{}"),
+    settings,
     createdAt: row.created_at,
   });
 });

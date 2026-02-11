@@ -58,16 +58,16 @@ do_start() {
 }
 
 do_sync_plugin() {
-  local REMOTE="mini.local"
+  local REMOTE_USER="mini.local"
   local REMOTE_DIR="~/Projects/botsChat/packages/plugin"
 
-  info "Syncing plugin to $REMOTE…"
+  info "Syncing plugin to mini.local…"
   rsync -avz --exclude node_modules --exclude .git --exclude dist --exclude .wrangler \
-    packages/plugin/ "$REMOTE:$REMOTE_DIR/"
+    packages/plugin/ "$REMOTE_USER:$REMOTE_DIR/"
   ok "Plugin files synced"
 
   info "Building plugin, deploying to extensions, restarting gateway on mini.local…"
-  ssh "$REMOTE" 'export PATH="/opt/homebrew/bin:$PATH"
+  ssh "$REMOTE_USER" 'export PATH="/opt/homebrew/bin:$PATH"
 cd ~/Projects/botsChat/packages/plugin
 npm run build
 EXT_DIR=~/.openclaw/extensions/botschat
@@ -83,7 +83,7 @@ echo "Gateway restarted (PID=$!)"'
 
   sleep 4
   info "Checking connection…"
-  ssh "$REMOTE" 'tail -5 /tmp/openclaw-gateway.log | grep -i "authenticated\|error\|Task scan"'
+  ssh "$REMOTE_USER" 'tail -5 /tmp/openclaw-gateway.log | grep -i "authenticated\|error\|Task scan"'
 }
 
 do_logs() {

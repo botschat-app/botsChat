@@ -8,6 +8,8 @@ import {
 import { getBotsChatRuntime } from "./runtime.js";
 import type { BotsChatChannelConfig, CloudInbound, ResolvedBotsChatAccount } from "./types.js";
 import { BotsChatCloudClient } from "./ws-client.js";
+import crypto from "crypto";
+import { encryptText, decryptText, toBase64, fromBase64 } from "e2e-crypto";
 
 // ---------------------------------------------------------------------------
 // A2UI message-tool hints — injected via agentPrompt.messageToolHints so
@@ -120,13 +122,35 @@ export const botschatPlugin = {
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const messageId = crypto.randomUUID();
+      let text = ctx.text;
+      let encrypted = false;
+
+      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}`);
+
+      if (client.e2eKey) {
+        try {
+          // Encrypt text using messageId as contextId
+          const ciphertext = await encryptText(client.e2eKey, text, messageId);
+          text = toBase64(ciphertext);
+          encrypted = true;
+          console.log(`[botschat][sendText] encrypted OK, ctLen=${text.length}`);
+        } catch (err) {
+            console.error(`[botschat][sendText] Encryption FAILED:`, err);
+            return { ok: false, error: new Error(`Encryption failed: ${err}`) };
+        }
+      }
+
       client.send({
         type: "agent.text",
         sessionKey: ctx.to,
-        text: ctx.text,
+        text,
         replyToId: ctx.replyToId ?? undefined,
         threadId: ctx.threadId?.toString(),
+        messageId,
+        encrypted,
       });
+      console.log(`[botschat][sendText] sent agent.text, encrypted=${encrypted}`);
       return { ok: true };
     },
 
@@ -140,18 +164,37 @@ export const botschatPlugin = {
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const messageId = crypto.randomUUID();
+      let text = ctx.text;
+      let encrypted = false;
+
+      if (client.e2eKey && text) { // Only encrypt checksum if present
+        try {
+             // Encrypt caption using messageId as contextId
+             const ciphertext = await encryptText(client.e2eKey, text, messageId);
+             text = toBase64(ciphertext);
+             encrypted = true;
+        } catch (err) {
+             return { ok: false, error: new Error(`Encryption failed: ${err}`) };
+        }
+      }
+
       if (ctx.mediaUrl) {
         client.send({
           type: "agent.media",
           sessionKey: ctx.to,
           mediaUrl: ctx.mediaUrl,
-          caption: ctx.text || undefined,
+          caption: text || undefined,
+          messageId,
+          encrypted,
         });
       } else {
         client.send({
           type: "agent.text",
           sessionKey: ctx.to,
-          text: ctx.text,
+          text: text,
+          messageId,
+          encrypted,
         });
       }
       return { ok: true };
@@ -190,6 +233,7 @@ export const botschatPlugin = {
         cloudUrl: account.cloudUrl,
         accountId,
         pairingToken: account.pairingToken,
+        e2ePassword: account.config?.e2ePassword,
         getModel: () => readAgentModel("main"),
         onMessage: (msg: CloudInbound) => {
           handleCloudMessage(msg, ctx);
@@ -362,7 +406,26 @@ async function handleCloudMessage(
 ): Promise<void> {
   switch (msg.type) {
     case "user.message": {
-      ctx.log?.info(`[${ctx.accountId}] Message from ${msg.userId}: ${msg.text.slice(0, 80)}${msg.mediaUrl ? " [+image]" : ""}`);
+      let text = msg.text;
+      
+      // Decrypt if needed
+      const client = getCloudClient(ctx.accountId);
+      // user.message usually comes with messageId. If not, we can't ensure integrity if we relied on it (CTR)
+      // but the type says messageId IS present.
+      if ((msg as any).encrypted && client?.e2eKey) {
+          try {
+              // msg.text is base64 ciphertext
+              // msg.messageId is implicit contextId (nonce source)
+              const cipherBytes = fromBase64(msg.text);
+              const decrypted = await decryptText(client.e2eKey, cipherBytes, msg.messageId);
+              text = decrypted;
+          } catch (err) {
+              ctx.log?.error(`[${ctx.accountId}] Decryption failed for message ${msg.messageId}: ${err}`);
+              text = "[Decryption Failed]";
+          }
+      }
+
+      ctx.log?.info(`[${ctx.accountId}] Message from ${msg.userId}: ${text.slice(0, 80)}${msg.mediaUrl ? " [+image]" : ""}`);
 
       try {
         const runtime = getBotsChatRuntime();
@@ -380,10 +443,10 @@ async function handleCloudMessage(
         // pass through the command-auth pipeline instead of being silently
         // dropped (the default is false / deny).
         const msgCtx: Record<string, unknown> = {
-          Body: msg.text,
-          RawBody: msg.text,
-          CommandBody: msg.text,
-          BodyForCommands: msg.text,
+          Body: text,
+          RawBody: text,
+          CommandBody: text,
+          BodyForCommands: text,
           From: `botschat:${msg.userId}`,
           To: msg.sessionKey,
           SessionKey: msg.sessionKey,
@@ -418,22 +481,48 @@ async function handleCloudMessage(
 
       // Create a reply dispatcher that sends responses back through the cloud WSS
       const client = getCloudClient(ctx.accountId);
+      console.log(`[botschat] client for accountId=${ctx.accountId}: connected=${client?.connected}`);
       const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        if (!client?.connected) return;
+        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}`);
+        if (!client?.connected) { console.log("[botschat][deliver] SKIP - not connected"); return; }
+        const messageId = crypto.randomUUID();
+        let text = payload.text ?? "";
+        let caption = payload.text ?? "";
+        let encrypted = false;
+
+        if (client.e2eKey && text) {
+          try {
+            const ct = await encryptText(client.e2eKey, text, messageId);
+            text = toBase64(ct);
+            caption = text;
+            encrypted = true;
+            console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}, encrypted=${encrypted}`);
+          } catch (err) {
+            console.error("[botschat][deliver] E2E encrypt failed:", err);
+          }
+        } else {
+          console.log(`[botschat][deliver] no encryption: hasKey=${!!client.e2eKey}, textLen=${text.length}`);
+        }
+
+        console.log(`[botschat][deliver] sending: type=${payload.mediaUrl ? "agent.media" : "agent.text"}, encrypted=${encrypted}, messageId=${messageId}`);
         if (payload.mediaUrl) {
           client.send({
             type: "agent.media",
             sessionKey: msg.sessionKey,
             mediaUrl: payload.mediaUrl,
-            caption: payload.text,
+            caption: encrypted ? caption : payload.text,
             threadId,
+            messageId,
+            encrypted,
           });
         } else if (payload.text) {
           client.send({
             type: "agent.text",
             sessionKey: msg.sessionKey,
-            text: payload.text,
+            text,
             threadId,
+            messageId,
+            encrypted,
           });
           // Detect model-change confirmations and emit model.changed
           // Handles both formats:
@@ -602,6 +691,21 @@ async function handleCloudMessage(
       await handleModelsRequest(ctx);
       break;
 
+    case "settings.defaultModel": {
+      const model = typeof msg.defaultModel === "string" ? msg.defaultModel.trim() : "";
+      if (model) {
+        ctx.log?.info(`[${ctx.accountId}] Setting OpenClaw default model to: ${model}`);
+        const result = await openclawConfigSetDefaultModel(model, ctx.log);
+        if (result.ok) {
+          const client = getCloudClient(ctx.accountId);
+          if (client?.connected) {
+            client.send({ type: "defaultModel.updated", model });
+          }
+        }
+      }
+      break;
+    }
+
     default:
       break;
   }
@@ -640,6 +744,33 @@ function parseScheduleToOpenClaw(schedule: string): { kind: string; everyMs?: nu
   }
 
   return null;
+}
+
+/**
+ * Run `openclaw config set agents.defaults.model.primary <model>` so the
+ * user's default model choice in BotsChat takes effect on the OpenClaw gateway.
+ */
+async function openclawConfigSetDefaultModel(
+  model: string,
+  log?: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<{ ok: boolean; error?: string }> {
+  if (!model || !model.trim()) return { ok: true };
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
+  const args = ["config", "set", "agents.defaults.model.primary", model.trim()];
+  log?.info(`Running: openclaw ${args.join(" ")}`);
+  try {
+    await execFileAsync("openclaw", args, {
+      timeout: 10_000,
+      env: { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` },
+    });
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log?.error(`openclaw config set default model failed: ${message}`);
+    return { ok: false, error: message };
+  }
 }
 
 /**
@@ -893,6 +1024,7 @@ async function handleTaskRun(
     sessionKey,
     status: "running",
     startedAt,
+    encrypted: false,
   });
 
   ctx.log?.info(`[${ctx.accountId}] Task ${msg.cronJobId} started (jobId=${jobId})`);
@@ -1025,6 +1157,21 @@ async function handleTaskRun(
   const finishedAt = Math.floor(Date.now() / 1000);
   const durationMs = (finishedAt - startedAt) * 1000;
 
+  // Encrypt summary if key exists
+  let summaryText = summary;
+  let isEncrypted = false;
+  
+  if (client?.e2eKey && summaryText) {
+      try {
+          // Use jobId as contextId (unique per run)
+          const ciphertext = await encryptText(client.e2eKey, summaryText, jobId);
+          summaryText = toBase64(ciphertext);
+          isEncrypted = true;
+      } catch (err) {
+          ctx.log?.error(`[${ctx.accountId}] Failed to encrypt job summary: ${err}`);
+      }
+  }
+
   // Send final status
   client.send({
     type: "job.update",
@@ -1032,10 +1179,11 @@ async function handleTaskRun(
     jobId,
     sessionKey,
     status,
-    summary,
+    summary: summaryText,
     startedAt,
     finishedAt,
     durationMs,
+    encrypted: isEncrypted,
   });
 
   ctx.log?.info(`[${ctx.accountId}] Task ${msg.cronJobId} finished: status=${status} duration=${durationMs}ms`);
@@ -1486,7 +1634,34 @@ async function handleTaskScanRequest(
     }
 
     ctx.log?.info(`[${ctx.accountId}] Task scan complete: found ${scannedTasks.length} background tasks`);
-    client.send({ type: "task.scan.result", tasks: scannedTasks });
+    
+    // Encrypt sensitive fields if key exists
+    const finalTasks = await Promise.all(scannedTasks.map(async (t) => {
+        if (!client?.e2eKey) return t;
+        try {
+            // Generate random IV for this record
+            const ivBytes = new Uint8Array(16); // 16 bytes for AES-CTR nonce (actually we use HKDF but here we want random context?)
+            // Wait, encryptText uses contextId -> HKDF -> nonce.
+            // If I want random IV, I can just generate random string as "contextId" and send it as "iv".
+            const ivStr = crypto.randomUUID(); // Use UUID as contextId
+            
+            const encSchedule = t.schedule ? toBase64(await encryptText(client.e2eKey, t.schedule, ivStr)) : "";
+            const encInstructions = t.instructions ? toBase64(await encryptText(client.e2eKey, t.instructions, ivStr)) : "";
+            
+            return {
+                ...t,
+                schedule: encSchedule,
+                instructions: encInstructions,
+                encrypted: true,
+                iv: ivStr, // Send the UUID contextId as "iv"
+            };
+        } catch (err) {
+            ctx.log?.error(`[${ctx.accountId}] Failed to encrypt task ${t.cronJobId}: ${err}`);
+            return t;
+        }
+    }));
+
+    client.send({ type: "task.scan.result", tasks: finalTasks });
   } catch (err) {
     ctx.log?.error(`[${ctx.accountId}] Task scan failed: ${err}`);
     // Send empty result on error

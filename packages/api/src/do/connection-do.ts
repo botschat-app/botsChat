@@ -180,7 +180,10 @@ export class ConnectionDO implements DurableObject {
 
       if (isValid) {
         ws.serializeAttachment({ ...attachment, authenticated: true });
-        ws.send(JSON.stringify({ type: "auth.ok" }));
+        // Include userId so the plugin can derive the E2E key
+        const userId = await this.state.storage.get<string>("userId");
+        console.log(`[DO] auth.ok → userId=${userId}`);
+        ws.send(JSON.stringify({ type: "auth.ok", userId }));
         // Store gateway default model from plugin auth
         if (msg.model) {
           this.defaultModel = msg.model as string;
@@ -229,12 +232,14 @@ export class ConnectionDO implements DurableObject {
       }
 
       await this.persistMessage({
+        id: msg.messageId as string | undefined,
         sender: "agent",
         sessionKey: msg.sessionKey as string,
         threadId: (msg.threadId ?? msg.replyToId) as string | undefined,
         text: (msg.text ?? msg.caption ?? "") as string,
         mediaUrl: persistedMediaUrl,
         a2ui: msg.jsonl as string | undefined,
+        encrypted: msg.encrypted ? 1 : 0,
       });
     }
 
@@ -271,12 +276,24 @@ export class ConnectionDO implements DurableObject {
       );
     }
 
+    // Plugin applied BotsChat default model to OpenClaw config — update and broadcast
+    if (msg.type === "defaultModel.updated" && typeof msg.model === "string") {
+      this.defaultModel = msg.model;
+      await this.state.storage.put("defaultModel", this.defaultModel);
+      this.broadcastToBrowsers(
+        JSON.stringify({ type: "connection.status", openclawConnected: true, defaultModel: this.defaultModel, models: this.cachedModels }),
+      );
+    }
+
     // Handle job updates from plugin — persist and forward to browsers
     if (msg.type === "job.update") {
       await this.handleJobUpdate(msg);
     }
 
     // Forward all messages to browser clients
+    if (msg.type === "agent.text") {
+      console.log(`[DO] Forwarding agent.text to browsers: encrypted=${msg.encrypted}, messageId=${msg.messageId}, textLen=${typeof msg.text === "string" ? msg.text.length : "?"}`);
+    }
     this.broadcastToBrowsers(JSON.stringify(msg));
   }
 
@@ -312,7 +329,9 @@ export class ConnectionDO implements DurableObject {
       }
 
       ws.serializeAttachment({ ...attachment, authenticated: true });
-      ws.send(JSON.stringify({ type: "auth.ok" }));
+      // Include userId so the browser can derive the E2E key
+      const doUserId2 = doUserId ?? payload.sub;
+      ws.send(JSON.stringify({ type: "auth.ok", userId: doUserId2 }));
 
       // Send current OpenClaw connection status + cached models
       await this.ensureCachedModels();
@@ -347,6 +366,7 @@ export class ConnectionDO implements DurableObject {
         sessionKey: msg.sessionKey as string,
         text: (msg.text ?? "") as string,
         mediaUrl: msg.mediaUrl as string | undefined,
+        encrypted: msg.encrypted ? 1 : 0,
       });
     }
 
@@ -401,6 +421,8 @@ export class ConnectionDO implements DurableObject {
         instructions: (t.instructions as string) ?? "",
         model: (t.model as string) ?? "",
         enabled: t.enabled as boolean,
+        encrypted: (t.encrypted as boolean) ?? false,
+        iv: (t.iv as string) ?? undefined,
       }));
       return Response.json({ tasks: result });
     } catch (err) {
@@ -634,10 +656,12 @@ export class ConnectionDO implements DurableObject {
     text: string;
     mediaUrl?: string;
     a2ui?: string;
+    encrypted?: number;
   }): Promise<void> {
     try {
       const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
       const id = opts.id ?? randomUUID();
+      const encrypted = opts.encrypted ?? 0;
 
       // Extract threadId from sessionKey pattern: ....:thread:{threadId}
       let threadId = opts.threadId;
@@ -647,10 +671,10 @@ export class ConnectionDO implements DurableObject {
       }
 
       await this.env.DB.prepare(
-        `INSERT INTO messages (id, user_id, session_key, thread_id, sender, text, media_url, a2ui)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, user_id, session_key, thread_id, sender, text, media_url, a2ui, encrypted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-        .bind(id, userId, opts.sessionKey, threadId ?? null, opts.sender, opts.text, opts.mediaUrl ?? null, opts.a2ui ?? null)
+        .bind(id, userId, opts.sessionKey, threadId ?? null, opts.sender, opts.text, opts.mediaUrl ?? null, opts.a2ui ?? null, encrypted)
         .run();
     } catch (err) {
       console.error("Failed to persist message:", err);
@@ -672,7 +696,7 @@ export class ConnectionDO implements DurableObject {
       if (threadId) {
         // Load thread messages
         result = await this.env.DB.prepare(
-          `SELECT id, session_key, thread_id, sender, text, media_url, a2ui, created_at
+          `SELECT id, session_key, thread_id, sender, text, media_url, a2ui, encrypted, created_at
            FROM messages
            WHERE session_key = ? AND thread_id = ?
            ORDER BY created_at ASC
@@ -683,7 +707,7 @@ export class ConnectionDO implements DurableObject {
       } else {
         // Load main session messages (exclude thread messages from the main list)
         result = await this.env.DB.prepare(
-          `SELECT id, session_key, thread_id, sender, text, media_url, a2ui, created_at
+          `SELECT id, session_key, thread_id, sender, text, media_url, a2ui, encrypted, created_at
            FROM messages
            WHERE session_key = ? AND thread_id IS NULL
            ORDER BY created_at ASC
@@ -721,6 +745,7 @@ export class ConnectionDO implements DurableObject {
         mediaUrl: row.media_url ?? undefined,
         a2ui: row.a2ui ?? undefined,
         threadId: row.thread_id ?? undefined,
+        encrypted: row.encrypted ?? 0,
       }));
 
       return Response.json({ messages, replyCounts });
@@ -968,9 +993,11 @@ export class ConnectionDO implements DurableObject {
         return;
       }
 
+      const encrypted = msg.encrypted ? 1 : 0;
+
       await this.env.DB.prepare(
-        `INSERT OR REPLACE INTO jobs (id, task_id, user_id, session_key, status, started_at, finished_at, duration_ms, summary)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO jobs (id, task_id, user_id, session_key, status, started_at, finished_at, duration_ms, summary, encrypted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           jobId,
@@ -982,6 +1009,7 @@ export class ConnectionDO implements DurableObject {
           finishedAt ?? null,
           durationMs ?? null,
           summary,
+          encrypted,
         )
         .run();
     } catch (err) {

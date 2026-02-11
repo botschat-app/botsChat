@@ -22,6 +22,7 @@ setup.post("/init", async (c) => {
     email?: string;
     password?: string;
     idToken?: string;
+    e2ePassword?: string;
   }>();
 
   let userId: string;
@@ -187,6 +188,7 @@ setup.post("/init", async (c) => {
       "openclaw plugins install @botschat/botschat",
       `openclaw config set channels.botschat.cloudUrl ${cloudUrl}`,
       `openclaw config set channels.botschat.pairingToken ${pairingToken}`,
+      ...(body.e2ePassword ? [`openclaw config set channels.botschat.e2ePassword "${body.e2ePassword}"`] : []),
       "openclaw config set channels.botschat.enabled true",
       "openclaw gateway restart",
     ],

@@ -12,6 +12,8 @@ dist/
 # Environment variables
 .env
 .env.*
+!packages/web/.env
+!packages/web/.env.production
 *.local
 
 # Editor / IDE

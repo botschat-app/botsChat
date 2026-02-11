@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { pairingApi, setupApi, type PairingToken } from "../api";
 import { useAppState } from "../store";
 import { dlog } from "../debug-log";
+import { E2eService } from "../e2e";
 
 /** Clipboard copy button with feedback */
 function CopyButton({ text }: { text: string }) {
@@ -168,10 +169,11 @@ export function ConnectionSettings() {
   // We never display full token values from the GET list (security: they are masked).
   const commandToken = freshToken?.token ?? null;
 
+  const e2ePwd = E2eService.getPassword();
   const setupCommand = commandToken
     ? `openclaw plugins install @botschat/botschat && \\
 openclaw config set channels.botschat.cloudUrl ${cloudUrl} && \\
-openclaw config set channels.botschat.pairingToken ${commandToken} && \\
+openclaw config set channels.botschat.pairingToken ${commandToken} && \\${e2ePwd ? `\nopenclaw config set channels.botschat.e2ePassword "${e2ePwd}" && \\` : ""}
 openclaw config set channels.botschat.enabled true && \\
 openclaw gateway restart`
     : null;

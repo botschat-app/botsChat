@@ -1,6 +1,7 @@
 /** WebSocket client for connecting to the BotsChat ConnectionDO. */
 
 import { dlog } from "./debug-log";
+import { E2eService } from "./e2e";
 
 export type WSMessage = {
   type: string;
@@ -44,19 +45,78 @@ export class BotsChatWSClient {
       this.ws!.send(JSON.stringify({ type: "auth", token: this.opts.token }));
     };
 
-    this.ws.onmessage = (evt) => {
+    this.ws.onmessage = async (evt) => {
       try {
         const msg = JSON.parse(evt.data) as WSMessage;
+        
+        // Handle E2E Decryption
+        console.log(`[E2E-WS] msg.type=${msg.type} encrypted=${msg.encrypted} hasKey=${E2eService.hasKey()} messageId=${msg.messageId}`);
+        if (msg.encrypted && E2eService.hasKey()) {
+           try {
+             if (msg.type === "agent.text" || msg.type === "agent.media") {
+                // Decrypt text/caption
+                const text = msg.text as string | undefined;
+                const caption = msg.caption as string | undefined;
+                const messageId = msg.messageId as string;
+                
+                if (text && messageId) {
+                    msg.text = await E2eService.decrypt(text, messageId);
+                    msg.encrypted = false;
+                }
+                if (caption && messageId) {
+                    msg.caption = await E2eService.decrypt(caption, messageId);
+                     msg.encrypted = false;
+                }
+             } else if (msg.type === "job.update") {
+                const summary = msg.summary as string;
+                 // Job ID is contextId
+                const jobId = msg.jobId as string;
+                if (summary && jobId) {
+                    msg.summary = await E2eService.decrypt(summary, jobId);
+                    msg.encrypted = false;
+                }
+             }
+           } catch (err) {
+               dlog.warn("E2E", "Decryption failed", err);
+               msg.decryptionError = true;
+           }
+        }
+        
+        // Handle Task Scan Results (array items)
+        if (msg.type === "task.scan.result" && Array.isArray(msg.tasks) && E2eService.hasKey()) {
+            for (const t of msg.tasks) {
+                if (t.encrypted && t.iv) {
+                    try {
+                        if (t.schedule) t.schedule = await E2eService.decrypt(t.schedule, t.iv);
+                        if (t.instructions) t.instructions = await E2eService.decrypt(t.instructions, t.iv);
+                        t.encrypted = false;
+                    } catch (err) {
+                         dlog.warn("E2E", `Task decryption failed for ${t.cronJobId}`, err);
+                         t.decryptionError = true;
+                    }
+                }
+            }
+        }
+
         if (msg.type === "auth.ok") {
           dlog.info("WS", "Auth OK — connected");
+          
+          // Try to load E2E password
+          const userId = msg.userId as string;
+          console.log(`[E2E-WS] auth.ok userId=${userId}, hasSavedPwd=${E2eService.hasSavedPassword()}`);
+          if (userId && E2eService.hasSavedPassword()) {
+              const loaded = await E2eService.loadSavedPassword(userId);
+              console.log(`[E2E-WS] loadSavedPassword result=${loaded}, hasKey=${E2eService.hasKey()}`);
+          }
+          
           this.backoffMs = 1000;
           this._connected = true;
           this.opts.onStatusChange(true);
         } else {
           this.opts.onMessage(msg);
         }
-      } catch {
-        dlog.warn("WS", "Failed to parse incoming message", evt.data);
+      } catch (err) {
+        dlog.warn("WS", "Failed to process incoming message", err);
       }
     };
 
@@ -79,8 +139,23 @@ export class BotsChatWSClient {
     };
   }
 
-  send(msg: WSMessage): void {
+  async send(msg: WSMessage): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      // E2E Encryption for user messages
+      if (msg.type === "user.message" && E2eService.hasKey() && typeof msg.text === "string") {
+          try {
+              const { ciphertext, messageId } = await E2eService.encrypt(msg.text);
+              msg.text = ciphertext;
+              msg.messageId = messageId;
+              msg.encrypted = true;
+          } catch (err) {
+              dlog.error("E2E", "Encryption failed", err);
+              // Fail? or send as plaintext?
+              // Security first: if key exists but encrypt fails, abort.
+              return; 
+          }
+      }
+      
       this.ws.send(JSON.stringify(msg));
     } else {
       dlog.warn("WS", `Cannot send — socket not open (readyState=${this.ws?.readyState})`, msg);
