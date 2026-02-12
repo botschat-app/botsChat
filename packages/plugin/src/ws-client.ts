@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { deriveKey } from "e2e-crypto";
+import { deriveKey } from "./e2e-crypto.js";
 import type { CloudInbound, CloudOutbound } from "./types.js";
 
 export type BotsChatCloudClientOptions = {
