@@ -2,6 +2,7 @@
 
 import { dlog } from "./debug-log";
 import { E2eService } from "./e2e";
+import { getToken, tryRefreshAccessToken } from "./api";
 
 export type WSMessage = {
   type: string;
@@ -11,7 +12,8 @@ export type WSMessage = {
 export type WSClientOptions = {
   userId: string;
   sessionId: string;
-  token: string;
+  /** Function that returns the current access token (reads from localStorage). */
+  getToken: () => string | null;
   onMessage: (msg: WSMessage) => void;
   onStatusChange: (connected: boolean) => void;
 };
@@ -41,8 +43,14 @@ export class BotsChatWSClient {
 
     this.ws.onopen = () => {
       dlog.info("WS", "Socket opened, sending auth");
+      const token = this.opts.getToken();
+      if (!token) {
+        dlog.error("WS", "No access token available, closing");
+        this.ws?.close();
+        return;
+      }
       // Authenticate with the ConnectionDO
-      this.ws!.send(JSON.stringify({ type: "auth", token: this.opts.token }));
+      this.ws!.send(JSON.stringify({ type: "auth", token }));
     };
 
     this.ws.onmessage = async (evt) => {
@@ -124,9 +132,21 @@ export class BotsChatWSClient {
       this._connected = false;
       this.opts.onStatusChange(false);
       if (!this.intentionalClose) {
-        dlog.warn("WS", `Connection closed (code=${evt.code}), reconnecting in ${this.backoffMs}ms`);
-        this.reconnectTimer = setTimeout(() => {
+        const isAuthFail = evt.code === 4001;
+        dlog.warn("WS", `Connection closed (code=${evt.code}), reconnecting in ${this.backoffMs}ms${isAuthFail ? " (will refresh token)" : ""}`);
+        this.reconnectTimer = setTimeout(async () => {
           this.backoffMs = Math.min(this.backoffMs * 2, 30000);
+          // On auth failure (4001), refresh the access token before reconnecting
+          if (isAuthFail) {
+            dlog.info("WS", "Refreshing access token before reconnect...");
+            const ok = await tryRefreshAccessToken();
+            if (ok) {
+              dlog.info("WS", "Token refreshed, reconnecting");
+              this.backoffMs = 1000; // reset backoff on successful refresh
+            } else {
+              dlog.error("WS", "Token refresh failed — will retry on next cycle");
+            }
+          }
           this.connect();
         }, this.backoffMs);
       } else {

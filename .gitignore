@@ -37,6 +37,4 @@ Thumbs.db
 
 # AI / Cursor generated plan files
 *.plan.md
-
-# VS Code / Cursor workspace files (contain local paths)
 *.code-workspace
