@@ -179,10 +179,28 @@ export class ConnectionDO implements DurableObject {
       const isValid = attachment?.preVerified || await this.validatePairingToken(token);
 
       if (isValid) {
+        // Close any existing (potentially stale) openclaw sockets before
+        // marking the new one as authenticated.  Cloudflare's edge infra
+        // terminates WebSocket connections every ~60 min (code 1006).  The
+        // plugin reconnects immediately, but the DO may not have detected
+        // the old socket's death yet (no close frame → no webSocketClose
+        // callback yet).  Without this cleanup, getOpenClawSocket() could
+        // return a stale/dead socket, silently dropping all messages.
+        const existingSockets = this.state.getWebSockets("openclaw");
+        for (const oldWs of existingSockets) {
+          if (oldWs !== ws) {
+            try {
+              oldWs.close(1000, "replaced by new connection");
+            } catch {
+              // Socket may already be dead — ignore
+            }
+          }
+        }
+
         ws.serializeAttachment({ ...attachment, authenticated: true });
         // Include userId so the plugin can derive the E2E key
         const userId = await this.state.storage.get<string>("userId");
-        console.log(`[DO] auth.ok → userId=${userId}`);
+        console.log(`[DO] auth.ok → userId=${userId}, closedStale=${existingSockets.length - 1}`);
         ws.send(JSON.stringify({ type: "auth.ok", userId }));
         // Store gateway default model from plugin auth
         if (msg.model) {
@@ -491,12 +509,15 @@ export class ConnectionDO implements DurableObject {
 
   private getOpenClawSocket(): WebSocket | null {
     const sockets = this.state.getWebSockets("openclaw");
-    // Return the first authenticated OpenClaw socket
+    // Return the LAST (newest) authenticated OpenClaw socket.
+    // After a reconnection there may briefly be multiple sockets
+    // before the stale cleanup in handleOpenClawMessage runs.
+    let newest: WebSocket | null = null;
     for (const s of sockets) {
       const att = s.deserializeAttachment() as { authenticated: boolean } | null;
-      if (att?.authenticated) return s;
+      if (att?.authenticated) newest = s;
     }
-    return sockets[0] ?? null;
+    return newest ?? sockets[sockets.length - 1] ?? null;
   }
 
   private broadcastToBrowsers(message: string): void {
