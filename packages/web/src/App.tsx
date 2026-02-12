@@ -698,15 +698,14 @@ export default function App() {
   useEffect(() => {
     if (!state.user) return;
 
-    const token = getToken();
-    if (!token) return;
+    if (!getToken()) return;
 
     const sessionId = randomUUID();
     dlog.info("WS", `Connecting WebSocket (session=${sessionId.slice(0, 8)}...)`);
     const client = new BotsChatWSClient({
       userId: state.user.id,
       sessionId,
-      token,
+      getToken,
       onMessage: (msg) => {
         handleWSMessageRef.current(msg);
       },
