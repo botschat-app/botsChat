@@ -9,7 +9,7 @@ import { getBotsChatRuntime } from "./runtime.js";
 import type { BotsChatChannelConfig, CloudInbound, ResolvedBotsChatAccount } from "./types.js";
 import { BotsChatCloudClient } from "./ws-client.js";
 import crypto from "crypto";
-import { encryptText, decryptText, toBase64, fromBase64 } from "e2e-crypto";
+import { encryptText, decryptText, toBase64, fromBase64 } from "./e2e-crypto.js";
 
 // ---------------------------------------------------------------------------
 // A2UI message-tool hints — injected via agentPrompt.messageToolHints so
