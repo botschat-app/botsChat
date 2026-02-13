@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAppState, useAppDispatch, type ChatMessage } from "../store";
 import { messagesApi } from "../api";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
+
+/** Simple string hash for action prompt keys (matches MessageContent / ChatWindow) */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return hash.toString(36);
+}
 
 type ThreadPanelProps = {
   sendMessage: (msg: WSMessage) => void;
@@ -40,11 +49,81 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
     (m) => m.id === state.activeThreadId,
   );
 
+  const threadSessionKey = state.selectedSessionKey
+    ? `${state.selectedSessionKey}:thread:${state.activeThreadId}`
+    : null;
+
+  /** Handle A2UI action button clicks in thread — sends as user message */
+  const handleA2UIAction = useCallback((action: string) => {
+    if (!threadSessionKey) return;
+    dlog.info("Thread/A2UI", `Action triggered: ${action}`);
+    const msg: ChatMessage = {
+      id: randomUUID(),
+      sender: "user",
+      text: action,
+      timestamp: Date.now(),
+      threadId: state.activeThreadId ?? undefined,
+    };
+    dispatch({ type: "ADD_THREAD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey: threadSessionKey,
+      text: action,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+  }, [threadSessionKey, state.activeThreadId, state.user?.id, sendMessage, dispatch]);
+
+  /** Handle ActionCard resolve in thread — marks widget done + sends choice */
+  const handleResolveAction = useCallback((messageId: string, value: string, label: string) => {
+    if (!threadSessionKey) return;
+    dlog.info("Thread/ActionCard", `Resolved: "${label}" (value="${value}")`);
+    const promptHash = simpleHash(label + value);
+    dispatch({ type: "RESOLVE_ACTION", messageId, promptHash, value, label });
+    const msg: ChatMessage = {
+      id: randomUUID(),
+      sender: "user",
+      text: label,
+      timestamp: Date.now(),
+      threadId: state.activeThreadId ?? undefined,
+    };
+    dispatch({ type: "ADD_THREAD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey: threadSessionKey,
+      text: label,
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+  }, [threadSessionKey, state.activeThreadId, state.user?.id, sendMessage, dispatch]);
+
+  /** Stop the current thread streaming — sends /stop */
+  const handleStop = useCallback(() => {
+    if (!threadSessionKey || !state.streamingRunId || !state.streamingThreadId) return;
+    dlog.info("Thread", "Stop streaming requested");
+    const msg: ChatMessage = {
+      id: randomUUID(),
+      sender: "user",
+      text: "/stop",
+      timestamp: Date.now(),
+      threadId: state.activeThreadId ?? undefined,
+    };
+    dispatch({ type: "ADD_THREAD_MESSAGE", message: msg });
+    sendMessage({
+      type: "user.message",
+      sessionKey: threadSessionKey,
+      text: "/stop",
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+  }, [threadSessionKey, state.streamingRunId, state.streamingThreadId, state.activeThreadId, state.user?.id, sendMessage, dispatch]);
+
+  const isThreadStreaming = !!state.streamingRunId && !!state.streamingThreadId;
+
   const handleSend = () => {
     if (!input.trim() || !state.selectedSessionKey) return;
 
     const trimmed = input.trim();
-    const threadSessionKey = `${state.selectedSessionKey}:thread:${state.activeThreadId}`;
     dlog.info("Thread", `Send reply: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { threadId: state.activeThreadId });
 
     const msg: ChatMessage = {
@@ -59,7 +138,7 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
 
     sendMessage({
       type: "user.message",
-      sessionKey: threadSessionKey,
+      sessionKey: threadSessionKey!,
       text: trimmed,
       userId: state.user?.id ?? "",
       messageId: msg.id,
@@ -114,7 +193,14 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
                     {new Date(parentMessage.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </div>
-                <MessageContent text={parentMessage.text} mediaUrl={parentMessage.mediaUrl} />
+                <MessageContent
+                  text={parentMessage.text}
+                  mediaUrl={parentMessage.mediaUrl}
+                  a2ui={parentMessage.a2ui}
+                  onAction={handleA2UIAction}
+                  onResolveAction={(value, label) => handleResolveAction(parentMessage.id, value, label)}
+                  resolvedActions={parentMessage.resolvedActions}
+                />
               </div>
             </div>
           </div>
@@ -165,7 +251,44 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
                     text={msg.text}
                     mediaUrl={msg.mediaUrl}
                     a2ui={msg.a2ui}
+                    isStreaming={msg.isStreaming}
+                    onAction={handleA2UIAction}
+                    onResolveAction={(value, label) => handleResolveAction(msg.id, value, label)}
+                    resolvedActions={msg.resolvedActions}
                   />
+                  {msg.isStreaming && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <span
+                        className="inline-block w-1.5 h-4 rounded-sm animate-pulse"
+                        style={{ background: "var(--text-link)", verticalAlign: "text-bottom" }}
+                      />
+                      <button
+                        onClick={handleStop}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-colors"
+                        style={{
+                          color: "var(--text-secondary)",
+                          background: "var(--bg-hover)",
+                          border: "1px solid var(--border)",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#e74c3c";
+                          e.currentTarget.style.color = "#fff";
+                          e.currentTarget.style.borderColor = "#e74c3c";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "var(--bg-hover)";
+                          e.currentTarget.style.color = "var(--text-secondary)";
+                          e.currentTarget.style.borderColor = "var(--border)";
+                        }}
+                        title="Stop generating"
+                      >
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                          <rect x="6" y="6" width="12" height="12" rx="2" />
+                        </svg>
+                        Stop
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -194,14 +317,32 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
             style={{ color: "var(--text-primary)", minHeight: 36 }}
           />
           <div className="flex justify-end px-3 pb-2">
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="px-3 py-1 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              style={{ background: "var(--bg-active)" }}
-            >
-              Send
-            </button>
+            {isThreadStreaming ? (
+              <button
+                onClick={handleStop}
+                className="px-3 py-1 rounded-sm text-caption font-bold text-white transition-colors"
+                style={{ background: "#e74c3c" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#c0392b"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "#e74c3c"; }}
+                title="Stop generating"
+              >
+                <div className="flex items-center gap-1">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  Stop
+                </div>
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="px-3 py-1 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                style={{ background: "var(--bg-active)" }}
+              >
+                Send
+              </button>
+            )}
           </div>
         </div>
       </div>

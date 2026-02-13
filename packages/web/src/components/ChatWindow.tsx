@@ -467,6 +467,47 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     });
   }, [sessionKey, state.user?.id, sendMessage, dispatch]);
 
+  /** Stop the current streaming response — sends /stop as a user message */
+  const handleStop = useCallback(() => {
+    if (!sessionKey || !state.streamingRunId) return;
+    dlog.info("Chat", "Stop streaming requested");
+
+    // Determine which session key to send /stop on (thread or main)
+    const targetKey = state.streamingThreadId
+      ? `${sessionKey}:thread:${state.streamingThreadId}`
+      : sessionKey;
+
+    const msg: ChatMessage = {
+      id: randomUUID(),
+      sender: "user",
+      text: "/stop",
+      timestamp: Date.now(),
+    };
+
+    if (state.streamingThreadId) {
+      dispatch({ type: "ADD_THREAD_MESSAGE", message: msg });
+    } else {
+      dispatch({ type: "ADD_MESSAGE", message: msg });
+    }
+
+    sendMessage({
+      type: "user.message",
+      sessionKey: targetKey,
+      text: "/stop",
+      userId: state.user?.id ?? "",
+      messageId: msg.id,
+    });
+
+    recordSkillUsage("/stop");
+    setSkillVersion((v) => v + 1);
+
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  }, [sessionKey, state.streamingRunId, state.streamingThreadId, state.user?.id, sendMessage, dispatch]);
+
+  const isStreaming = !!state.streamingRunId && !state.streamingThreadId;
+
   const selectedAgent = state.agents.find((a) => a.id === state.selectedAgentId);
   const channelName = selectedAgent?.name ?? "channel";
   const channelId = selectedAgent?.channelId ?? null;
@@ -576,6 +617,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
               onOpenThread={() => openThread(msg.id)}
               onAction={handleA2UIAction}
               onResolveAction={(value, label) => handleResolveAction(msg.id, value, label)}
+              onStop={handleStop}
             />
           );
         })}
@@ -702,20 +744,38 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
               </button>
             </div>
 
-            {/* Send button */}
-            <button
-              onClick={handleSend}
-              disabled={(!input.trim() && !pendingImage) || !state.openclawConnected}
-              className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              style={{ background: "var(--bg-active)" }}
-            >
-              <div className="flex items-center gap-1.5">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                </svg>
-                Send
-              </div>
-            </button>
+            {/* Send / Stop button */}
+            {isStreaming ? (
+              <button
+                onClick={handleStop}
+                className="px-3 py-1.5 rounded-sm text-caption font-bold text-white transition-colors"
+                style={{ background: "#e74c3c" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#c0392b"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "#e74c3c"; }}
+                title="Stop generating"
+              >
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  Stop
+                </div>
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={(!input.trim() && !pendingImage) || !state.openclawConnected}
+                className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                style={{ background: "var(--bg-active)" }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                  </svg>
+                  Send
+                </div>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -730,12 +790,14 @@ function MessageRow({
   onOpenThread,
   onAction,
   onResolveAction,
+  onStop,
 }: {
   msg: ChatMessage;
   grouped: boolean;
   onOpenThread: () => void;
   onAction?: (action: string) => void;
   onResolveAction?: (value: string, label: string) => void;
+  onStop?: () => void;
 }) {
   const state = useAppState();
   const senderLabel = msg.sender === "user" ? "You" : "OpenClaw Agent";
@@ -783,10 +845,39 @@ function MessageRow({
             resolvedActions={msg.resolvedActions}
           />
           {msg.isStreaming && (
-            <span
-              className="inline-block w-1.5 h-4 ml-0.5 rounded-sm animate-pulse"
-              style={{ background: "var(--text-link)", verticalAlign: "text-bottom" }}
-            />
+            <div className="flex items-center gap-2 mt-1">
+              <span
+                className="inline-block w-1.5 h-4 rounded-sm animate-pulse"
+                style={{ background: "var(--text-link)", verticalAlign: "text-bottom" }}
+              />
+              {onStop && (
+                <button
+                  onClick={onStop}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-colors"
+                  style={{
+                    color: "var(--text-secondary)",
+                    background: "var(--bg-hover)",
+                    border: "1px solid var(--border)",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#e74c3c";
+                    e.currentTarget.style.color = "#fff";
+                    e.currentTarget.style.borderColor = "#e74c3c";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text-secondary)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                  }}
+                  title="Stop generating"
+                >
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  Stop
+                </button>
+              )}
+            </div>
           )}
 
           {/* Thread bar – shown when this message has thread replies */}

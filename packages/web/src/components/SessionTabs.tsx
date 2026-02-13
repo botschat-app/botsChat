@@ -3,6 +3,45 @@ import { useAppState, useAppDispatch } from "../store";
 import { sessionsApi, channelsApi, agentsApi } from "../api";
 import { dlog } from "../debug-log";
 
+// ---------------------------------------------------------------------------
+// Session history — tracks per-channel usage order in localStorage
+// ---------------------------------------------------------------------------
+const SESSION_HISTORY_KEY = "botschat:sessionHistory";
+
+/** Get the ordered list of recently-used session IDs for a channel. */
+function getSessionHistory(channelId: string): string[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || "{}");
+    return Array.isArray(all[channelId]) ? all[channelId] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Record a session as the most-recently-used for its channel. */
+function recordSessionUsage(channelId: string, sessionId: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || "{}");
+    const list: string[] = Array.isArray(all[channelId]) ? all[channelId] : [];
+    // Move to front (most recent)
+    const filtered = list.filter((id) => id !== sessionId);
+    filtered.unshift(sessionId);
+    // Keep at most 50 entries per channel
+    all[channelId] = filtered.slice(0, 50);
+    localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+/** Remove a session from the history for a channel. */
+function removeSessionFromHistory(channelId: string, sessionId: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || "{}");
+    const list: string[] = Array.isArray(all[channelId]) ? all[channelId] : [];
+    all[channelId] = list.filter((id) => id !== sessionId);
+    localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
 type SessionTabsProps = {
   channelId: string | null;
 };
@@ -12,8 +51,10 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
   const dispatch = useAppDispatch();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const editRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
 
   const sessions = state.sessions;
   const selectedId = state.selectedSessionId;
@@ -26,19 +67,33 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
     }
   }, [editingId]);
 
+  // Close confirmation popover on outside click
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const handler = (e: MouseEvent) => {
+      if (confirmRef.current && !confirmRef.current.contains(e.target as Node)) {
+        setConfirmDeleteId(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [confirmDeleteId]);
+
   const handleSelect = useCallback(
     (sessionId: string) => {
       if (sessionId === selectedId) return;
       const session = sessions.find((s) => s.id === sessionId);
       if (!session) return;
       dlog.info("Session", `Switched to session: ${session.name} (${session.id})`);
+      // Record usage for smart navigation on close
+      if (channelId) recordSessionUsage(channelId, session.id);
       dispatch({
         type: "SELECT_SESSION",
         sessionId: session.id,
         sessionKey: session.sessionKey,
       });
     },
-    [selectedId, sessions, dispatch],
+    [selectedId, sessions, channelId, dispatch],
   );
 
   const handleCreate = useCallback(async () => {
@@ -73,6 +128,7 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
       const session = await sessionsApi.create(effectiveChannelId);
       dlog.info("Session", `Created session: ${session.name} (${session.id})`);
       dispatch({ type: "ADD_SESSION", session });
+      recordSessionUsage(effectiveChannelId, session.id);
       dispatch({
         type: "SELECT_SESSION",
         sessionId: session.id,
@@ -96,14 +152,22 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
         await sessionsApi.delete(channelId, sessionId);
         dlog.info("Session", `Deleted session: ${sessionId}`);
         dispatch({ type: "REMOVE_SESSION", sessionId });
-        // If deleted the selected session, switch to the first remaining
+        removeSessionFromHistory(channelId, sessionId);
+        setConfirmDeleteId(null);
+
+        // If deleted the selected session, navigate to the last-used session
+        // in the same channel (from history), or fall back to first remaining
         if (selectedId === sessionId) {
           const remaining = sessions.filter((s) => s.id !== sessionId);
           if (remaining.length > 0) {
+            const history = getSessionHistory(channelId);
+            const target = history
+              .map((hId) => remaining.find((s) => s.id === hId))
+              .find(Boolean) ?? remaining[0];
             dispatch({
               type: "SELECT_SESSION",
-              sessionId: remaining[0].id,
-              sessionKey: remaining[0].sessionKey,
+              sessionId: target.id,
+              sessionKey: target.sessionKey,
             });
           }
         }
@@ -197,23 +261,6 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
                   title={`${session.name} (double-click to rename)`}
                 >
                   <span className="max-w-[120px] truncate">{session.name}</span>
-
-                  {/* Close button — only show on hover, not for last session */}
-                  {sessions.length > 1 && (
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(session.id);
-                      }}
-                      className="ml-0.5 w-4 h-4 flex items-center justify-center rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[--bg-hover]"
-                      style={{ color: "var(--text-muted)" }}
-                      title="Close session"
-                    >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </span>
-                  )}
                 </button>
               )}
             </div>
@@ -241,6 +288,76 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
           </svg>
         </button>
       </div>
+
+      {/* Close current session button — separate from tabs, with confirmation */}
+      {sessions.length > 1 && selectedId && (
+        <div className="relative ml-auto pl-2 flex-shrink-0">
+          <button
+            onClick={() => setConfirmDeleteId(selectedId)}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors"
+            style={{ color: "var(--text-muted)" }}
+            title="Close current session"
+            aria-label="Close current session"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-hover)";
+              e.currentTarget.style.color = "var(--text-primary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "";
+              e.currentTarget.style.color = "var(--text-muted)";
+            }}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          {/* Confirmation popover */}
+          {confirmDeleteId && (
+            <div
+              ref={confirmRef}
+              className="absolute right-0 top-full mt-1 z-50 rounded-md shadow-lg py-2 px-3 min-w-[180px]"
+              style={{
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border)",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              }}
+            >
+              <p className="text-caption mb-2" style={{ color: "var(--text-primary)" }}>
+                Close this session?
+              </p>
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="px-2.5 py-1 text-caption rounded-md transition-colors"
+                  style={{ color: "var(--text-secondary)" }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "";
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDelete(confirmDeleteId)}
+                  className="px-2.5 py-1 text-caption font-bold rounded-md text-white transition-colors"
+                  style={{ background: "#e74c3c" }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#c0392b";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "#e74c3c";
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

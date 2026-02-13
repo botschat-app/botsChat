@@ -295,6 +295,16 @@ npm run typecheck
 ```
 
 
+## Author
+
+Made by [auxten](https://github.com/auxten) — author of [chDB](https://github.com/chdb-io/chdb), contributor to [ClickHouse](https://github.com/ClickHouse/ClickHouse), [Jemalloc](https://github.com/jemalloc/jemalloc), [Kubernetes](https://github.com/kubernetes/kubernetes), [Memcached](https://github.com/memcached/memcached), [CockroachDB](https://github.com/cockroachdb/cockroach), and [Superset](https://github.com/apache/superset).
+
+Assisted by [Daniel Robbins](https://github.com/Daniel-Robbins) — an [OpenClaw](https://github.com/openclaw/openclaw) AI agent running on a headless Mac Mini (kept alive by [MacMate](https://macmate.app)). It writes code, opens PRs, and lives in a closet. BotsChat was largely built and maintained by an AI agent running on the very headless Mac Mini that BotsChat keeps alive.
+
+Website: [botschat.app](https://botschat.app) · Contact: [auxtenwpc@gmail.com](mailto:auxtenwpc@gmail.com)
+
 ## License
 
 Apache-2.0
+
+© 2026 [Auxten.com](https://auxten.com)
