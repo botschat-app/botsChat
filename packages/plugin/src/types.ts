@@ -134,6 +134,12 @@ export type CloudInbound =
       userId: string;
       messageId: string;
       mediaUrl?: string;
+      /** Parent message fields — attached by ConnectionDO for thread messages */
+      parentMessageId?: string;
+      parentText?: string;
+      parentSender?: string;
+      /** 0 = plaintext, 1 = encrypted */
+      parentEncrypted?: number;
     }
   | {
       type: "user.media";

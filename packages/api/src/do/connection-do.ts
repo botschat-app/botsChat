@@ -391,7 +391,34 @@ export class ConnectionDO implements DurableObject {
     // Forward user messages to OpenClaw
     const openclawWs = this.getOpenClawSocket();
     if (openclawWs) {
-      openclawWs.send(JSON.stringify(msg));
+      // If this is a thread message, look up the parent message and attach it
+      // so the plugin can inject the thread-origin context into the AI conversation.
+      const sessionKey = msg.sessionKey as string | undefined;
+      const threadMatch = sessionKey?.match(/:thread:(.+)$/);
+      let enrichedMsg = msg;
+      if (threadMatch) {
+        const parentId = threadMatch[1];
+        try {
+          const parentRow = await this.env.DB.prepare(
+            `SELECT id, text, sender, encrypted FROM messages WHERE id = ? LIMIT 1`,
+          )
+            .bind(parentId)
+            .first();
+          if (parentRow) {
+            enrichedMsg = {
+              ...msg,
+              parentMessageId: parentRow.id as string,
+              parentText: (parentRow.text ?? "") as string,
+              parentSender: parentRow.sender as string,
+              parentEncrypted: (parentRow.encrypted ?? 0) as number,
+            };
+            console.log(`[DO] Attached parent message for thread: parentId=${parentId}, sender=${parentRow.sender}, encrypted=${parentRow.encrypted}`);
+          }
+        } catch (err) {
+          console.error(`[DO] Failed to fetch parent message for thread ${parentId}:`, err);
+        }
+      }
+      openclawWs.send(JSON.stringify(enrichedMsg));
     } else {
       ws.send(
         JSON.stringify({
