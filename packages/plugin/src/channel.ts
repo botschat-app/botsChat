@@ -437,6 +437,32 @@ async function handleCloudMessage(
         const threadMatch = msg.sessionKey.match(/:thread:(.+)$/);
         const threadId = threadMatch ? threadMatch[1] : undefined;
 
+        // Resolve parent message text for thread context injection.
+        // When a thread is started, the parent message (the one the thread
+        // originated from) is attached by ConnectionDO.  We decrypt it here
+        // and inject it as GroupSystemPrompt so the AI has full context.
+        let parentContext: string | undefined;
+        if (threadId && (msg as any).parentText) {
+          let parentText = (msg as any).parentText as string;
+          const parentSender = ((msg as any).parentSender as string) ?? "unknown";
+          const parentEncrypted = (msg as any).parentEncrypted as number | undefined;
+          const parentMessageId = (msg as any).parentMessageId as string | undefined;
+          const e2eClient = getCloudClient(ctx.accountId);
+
+          if (parentEncrypted && e2eClient?.e2eKey && parentMessageId) {
+            try {
+              const cipherBytes = fromBase64(parentText);
+              parentText = await decryptText(e2eClient.e2eKey, cipherBytes, parentMessageId);
+            } catch (err) {
+              ctx.log?.error(`[${ctx.accountId}] Failed to decrypt parent message ${parentMessageId}: ${err}`);
+              parentText = "[Decryption Failed]";
+            }
+          }
+
+          parentContext = `[Thread context — this conversation is a thread reply to the following ${parentSender === "user" ? "user" : "assistant"} message]\n${parentText}`;
+          ctx.log?.info(`[${ctx.accountId}] Thread parent context injected (${parentText.length} chars)`);
+        }
+
         // Build the MsgContext that OpenClaw's dispatch pipeline expects.
         // BotsChat users are authenticated (logged in via the web UI), so
         // mark commands as authorized — this lets directives like /model
@@ -460,6 +486,8 @@ async function handleCloudMessage(
           CommandAuthorized: true,
           // A2UI format instructions are injected via agentPrompt.messageToolHints
           // (inside the message tool docs in the system prompt) — no GroupSystemPrompt needed.
+          // Inject parent message as GroupSystemPrompt for thread context.
+          ...(parentContext ? { GroupSystemPrompt: parentContext } : {}),
           ...(threadId ? { MessageThreadId: threadId, ReplyToId: threadId } : {}),
           // Include image URL if the user sent an image.
           // Resolve relative URLs (e.g. /api/media/...) to absolute using cloudUrl
