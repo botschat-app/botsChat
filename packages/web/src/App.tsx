@@ -1,4 +1,5 @@
 import React, { useReducer, useEffect, useCallback, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import {
   appReducer,
@@ -138,6 +139,35 @@ export default function App() {
           setToken(null);
           setRefreshToken(null);
         });
+    } else if (import.meta.env.VITE_DEBUG_AUTO_LOGIN && !Capacitor.isNativePlatform()) {
+      // Debug auto-login: skip login screen in simulator/browser dev mode only.
+      // Real devices use normal Google OAuth login.
+      const debugEmail = import.meta.env.VITE_DEBUG_AUTO_LOGIN_EMAIL as string | undefined;
+      const apiBase = import.meta.env.VITE_DEBUG_API_BASE as string | undefined;
+      if (debugEmail) {
+        const url = `${apiBase || ""}/api/auth/dev-login`;
+        dlog.info("Auth", `Debug auto-login as ${debugEmail} via ${url}`);
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: debugEmail }),
+        })
+          .then((r) => r.json())
+          .then((res: Record<string, string>) => {
+            if (res.token) {
+              setToken(res.token);
+              if (res.refreshToken) setRefreshToken(res.refreshToken);
+              dispatch({
+                type: "SET_USER",
+                user: { id: res.id, email: res.email, displayName: res.displayName },
+              });
+              dlog.info("Auth", `Debug auto-login success: ${res.email}`);
+            } else {
+              dlog.warn("Auth", `Debug auto-login returned no token`, res);
+            }
+          })
+          .catch((err) => dlog.warn("Auth", `Debug auto-login failed: ${err}`));
+      }
     }
   }, []);
 

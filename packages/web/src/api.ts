@@ -1,8 +1,18 @@
 /** Lightweight API client for the BotsChat Workers API. */
 
+import { Capacitor } from "@capacitor/core";
 import { dlog } from "./debug-log";
 
-const API_BASE = "/api";
+/**
+ * In Capacitor (native app), the WebView loads from capacitor:// so relative
+ * URLs won't reach the API server. We use the full production URL instead.
+ * On the web, relative "/api" works because the same host serves both.
+ */
+const SERVER_URL = Capacitor.isNativePlatform()
+  ? "https://console.botschat.app"
+  : "";
+
+const API_BASE = `${SERVER_URL}/api`;
 
 let _token: string | null = localStorage.getItem("botschat_token");
 let _refreshToken: string | null = localStorage.getItem("botschat_refresh_token");

@@ -9,9 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.1",
     "@tailwindcss/typography": "^0.5.19",
-    "firebase": "^12.9.0",
     "e2e-crypto": "*",
+    "firebase": "^12.9.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

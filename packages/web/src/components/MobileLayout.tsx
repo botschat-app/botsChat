@@ -1,11 +1,10 @@
 import React, { useState, useCallback } from "react";
-import { useAppState, useAppDispatch, type ActiveView } from "../store";
+import { useAppState, useAppDispatch } from "../store";
 import { setToken, setRefreshToken } from "../api";
 import type { WSMessage } from "../ws";
 import { Sidebar } from "./Sidebar";
 import { ChatWindow } from "./ChatWindow";
 import { ThreadPanel } from "./ThreadPanel";
-import { JobList } from "./JobList";
 import { CronSidebar } from "./CronSidebar";
 import { CronDetail } from "./CronDetail";
 import { ModelSelect } from "./ModelSelect";
@@ -13,11 +12,14 @@ import { ConnectionSettings } from "./ConnectionSettings";
 import { E2ESettings } from "./E2ESettings";
 import { dlog } from "../debug-log";
 
+/**
+ * Mobile screen stack — unified home replaces separate channel-list / cron-list.
+ * No bottom tab bar; Channels + Automations are both visible on the home screen.
+ */
 type MobileScreen =
-  | "channel-list"
+  | "home"
   | "chat"
   | "thread"
-  | "cron-list"
   | "cron-detail";
 
 type MobileLayoutProps = {
@@ -44,52 +46,19 @@ export function MobileLayout({
   const state = useAppState();
   const dispatch = useAppDispatch();
 
-  // Mobile navigation state — stack-based
+  // Mobile navigation state — stack-based, unified home screen
   const [screen, setScreen] = useState<MobileScreen>(() => {
-    if (state.activeView === "automations") return "cron-list";
     if (state.selectedAgentId && state.selectedSessionKey) return "chat";
-    return "channel-list";
+    return "home";
   });
 
   const [showUserMenu, setShowUserMenu] = useState(false);
 
-  const activeTab = state.activeView;
-
-  const setActiveTab = useCallback((view: ActiveView) => {
-    dispatch({ type: "SET_ACTIVE_VIEW", view });
-    if (view === "messages") {
-      if (state.selectedAgentId && state.selectedSessionKey) {
-        setScreen("chat");
-      } else {
-        setScreen("channel-list");
-      }
-    } else {
-      if (state.selectedCronTaskId) {
-        setScreen("cron-detail");
-      } else {
-        setScreen("cron-list");
-      }
-    }
-  }, [dispatch, state.selectedAgentId, state.selectedSessionKey, state.selectedCronTaskId]);
-
-  // Navigate to chat when a channel is selected (via Sidebar's internal dispatch)
-  // We listen for selectedAgentId changes to auto-navigate
-  const prevAgentIdRef = React.useRef(state.selectedAgentId);
-  React.useEffect(() => {
-    if (state.selectedAgentId && state.selectedAgentId !== prevAgentIdRef.current && screen === "channel-list") {
-      setScreen("chat");
-    }
-    prevAgentIdRef.current = state.selectedAgentId;
-  }, [state.selectedAgentId, screen]);
-
-  // Navigate to cron detail when a cron task is selected
-  const prevCronTaskIdRef = React.useRef(state.selectedCronTaskId);
-  React.useEffect(() => {
-    if (state.selectedCronTaskId && state.selectedCronTaskId !== prevCronTaskIdRef.current && screen === "cron-list") {
-      setScreen("cron-detail");
-    }
-    prevCronTaskIdRef.current = state.selectedCronTaskId;
-  }, [state.selectedCronTaskId, screen]);
+  // Navigation to chat / cron-detail is handled explicitly by the onNavigate
+  // callbacks passed to Sidebar and CronSidebar. We intentionally do NOT
+  // auto-navigate when selectedAgentId / selectedCronTaskId change, because
+  // App.tsx auto-selects an agent on mount — that would navigate to an empty
+  // chat screen before sessions have loaded (issue #4a / #4b).
 
   // Navigate to thread when thread opens
   React.useEffect(() => {
@@ -119,14 +88,14 @@ export function MobileLayout({
   const goBack = useCallback(() => {
     switch (screen) {
       case "chat":
-        setScreen("channel-list");
+        setScreen("home");
         break;
       case "thread":
         dispatch({ type: "CLOSE_THREAD" });
         setScreen("chat");
         break;
       case "cron-detail":
-        setScreen("cron-list");
+        setScreen("home");
         break;
       default:
         break;
@@ -136,7 +105,7 @@ export function MobileLayout({
   // Determine the header title
   const getHeaderTitle = (): string => {
     switch (screen) {
-      case "channel-list":
+      case "home":
         return "BotsChat";
       case "chat": {
         const agent = state.agents.find((a) => a.id === state.selectedAgentId);
@@ -144,8 +113,6 @@ export function MobileLayout({
       }
       case "thread":
         return "Thread";
-      case "cron-list":
-        return "Automations";
       case "cron-detail": {
         const task = state.cronTasks.find((t) => t.id === state.selectedCronTaskId);
         return task?.name ?? "Task Detail";
@@ -155,18 +122,22 @@ export function MobileLayout({
     }
   };
 
-  const showBackButton = screen !== "channel-list" && screen !== "cron-list";
+  const showBackButton = screen !== "home";
 
   return (
     <div
-      className="flex flex-col h-screen"
-      style={{ background: "var(--bg-surface)" }}
+      className="flex flex-col"
+      style={{
+        height: "calc(100vh - var(--keyboard-height, 0px))",
+        background: "var(--bg-surface)",
+        transition: "height 0.2s ease-out",
+      }}
     >
       {/* ---- Top nav bar (44px + safe area for standalone PWA) ---- */}
       <div
         className="flex items-center justify-between px-4 flex-shrink-0"
         style={{
-          height: 44,
+          minHeight: "calc(44px + env(safe-area-inset-top, 0px))",
           paddingTop: "env(safe-area-inset-top, 0px)",
           background: "var(--bg-primary)",
           borderBottom: "1px solid var(--border)",
@@ -287,9 +258,11 @@ export function MobileLayout({
 
       {/* ---- Screen content ---- */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {screen === "channel-list" && (
+        {/* Unified home: Channels + Automations in one scrollable list */}
+        {screen === "home" && (
           <div className="flex-1 min-h-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
-            <Sidebar onOpenSettings={onOpenSettings} />
+            <Sidebar onOpenSettings={onOpenSettings} onNavigate={() => setScreen("chat")} />
+            <CronSidebar onNavigate={() => setScreen("cron-detail")} />
           </div>
         )}
 
@@ -305,49 +278,11 @@ export function MobileLayout({
           </div>
         )}
 
-        {screen === "cron-list" && (
-          <div className="flex-1 min-h-0 overflow-y-auto" style={{ background: "var(--bg-secondary)" }}>
-            <CronSidebar />
-          </div>
-        )}
-
         {screen === "cron-detail" && (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <CronDetail />
           </div>
         )}
-      </div>
-
-      {/* ---- Bottom tab bar (56px) ---- */}
-      <div
-        className="flex items-stretch flex-shrink-0"
-        style={{
-          height: 56,
-          background: "var(--bg-primary)",
-          borderTop: "1px solid var(--border)",
-          paddingBottom: "env(safe-area-inset-bottom, 0px)",
-        }}
-      >
-        <TabButton
-          label="Messages"
-          active={activeTab === "messages"}
-          onClick={() => setActiveTab("messages")}
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
-            </svg>
-          }
-        />
-        <TabButton
-          label="Automations"
-          active={activeTab === "automations"}
-          onClick={() => setActiveTab("automations")}
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-        />
       </div>
 
       {/* Settings modal */}
@@ -478,30 +413,5 @@ function MobileSettingsModal({
         </button>
       </div>
     </div>
-  );
-}
-
-function TabButton({
-  label,
-  active,
-  onClick,
-  icon,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors"
-      style={{
-        color: active ? "var(--text-link)" : "var(--text-muted)",
-      }}
-    >
-      {icon}
-      <span className="text-[10px] leading-tight">{label}</span>
-    </button>
   );
 }

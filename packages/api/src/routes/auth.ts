@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { createToken, createRefreshToken, verifyRefreshToken, hashPassword, verifyPassword, getJwtSecret } from "../utils/auth.js";
-import { verifyFirebaseIdToken } from "../utils/firebase.js";
+import { verifyAnyGoogleToken } from "../utils/firebase.js";
 import { generateId } from "../utils/id.js";
 
 const auth = new Hono<{ Bindings: Env }>();
@@ -140,10 +140,16 @@ async function handleFirebaseAuth(c: {
     return c.json({ error: "Firebase sign-in is not configured" }, 500);
   }
 
-  // 1. Verify the Firebase ID token
+  // 1. Verify the ID token (Firebase or native Google)
+  // Allowed Google client IDs for native iOS/Android sign-in
+  const allowedGoogleClientIds = [
+    c.env.GOOGLE_WEB_CLIENT_ID,       // Web Client ID (iOSServerClientId)
+    c.env.GOOGLE_IOS_CLIENT_ID,       // iOS Client ID
+  ].filter(Boolean) as string[];
+
   let firebaseUser;
   try {
-    firebaseUser = await verifyFirebaseIdToken(idToken, projectId);
+    firebaseUser = await verifyAnyGoogleToken(idToken, projectId, allowedGoogleClientIds);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Token verification failed";
     return c.json({ error: msg }, 401);
@@ -235,6 +241,43 @@ async function handleFirebaseAuth(c: {
 auth.post("/firebase", (c) => handleFirebaseAuth(c));
 auth.post("/google", (c) => handleFirebaseAuth(c));
 auth.post("/github", (c) => handleFirebaseAuth(c));
+
+/**
+ * POST /api/auth/dev-login — development-only passwordless login by email.
+ * Used for mobile debugging when OAuth is not yet working.
+ */
+auth.post("/dev-login", async (c) => {
+  if (c.env.ENVIRONMENT !== "development") {
+    return c.json({ error: "Dev login is only available in development mode" }, 403);
+  }
+
+  const { email } = await c.req.json<{ email: string }>();
+  if (!email?.trim()) {
+    return c.json({ error: "email is required" }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    "SELECT id, email, display_name FROM users WHERE email = ?",
+  )
+    .bind(email.trim().toLowerCase())
+    .first<{ id: string; email: string; display_name: string | null }>();
+
+  if (!row) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  const secret = getJwtSecret(c.env);
+  const token = await createToken(row.id, secret);
+  const refreshToken = await createRefreshToken(row.id, secret);
+
+  return c.json({
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    token,
+    refreshToken,
+  });
+});
 
 /** POST /api/auth/refresh — exchange a refresh token for a new access token */
 auth.post("/refresh", async (c) => {

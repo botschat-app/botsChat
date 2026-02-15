@@ -4,6 +4,7 @@ import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { ModelSelect } from "./ModelSelect";
 import { SessionTabs } from "./SessionTabs";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
 
@@ -155,11 +156,13 @@ function getSortedSkills(): { skills: Skill[]; store: SkillStore } {
 export function ChatWindow({ sendMessage }: ChatWindowProps) {
   const state = useAppState();
   const dispatch = useAppDispatch();
+  const isMobile = useIsMobile();
   const [input, setInput] = useState("");
   const [skillVersion, setSkillVersion] = useState(0); // bump to re-sort skills
   const [pendingImage, setPendingImage] = useState<{ file: File; preview: string } | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [quotedMessage, setQuotedMessage] = useState<ChatMessage | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -184,15 +187,18 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     }
   }, [input]);
 
-  // Auto-focus the input when a session is active (page load or channel switch)
+  // Auto-focus the input when a session is active (page load or channel switch).
+  // On mobile, skip auto-focus to avoid popping up the keyboard unexpectedly
+  // every time the user switches sessions, taps a message, or navigates.
   useEffect(() => {
+    if (isMobile) return;
     if (sessionKey && inputRef.current) {
       // Small delay to ensure DOM is ready after render
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
     }
-  }, [sessionKey]);
+  }, [sessionKey, isMobile]);
 
   // Restore per-session model from localStorage when session changes
   useEffect(() => {
@@ -360,7 +366,12 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   const handleSend = async () => {
     if ((!input.trim() && !pendingImage) || !sessionKey) return;
 
-    const trimmed = input.trim();
+    // Prepend quoted message as Markdown blockquote
+    const rawTrimmed = input.trim();
+    const trimmed = quotedMessage
+      ? `> ${quotedMessage.text.split("\n").slice(0, 3).join("\n> ")}\n\n${rawTrimmed}`
+      : rawTrimmed;
+    setQuotedMessage(null);
     const hasText = trimmed.length > 0;
     const isSkill = hasText && trimmed.startsWith("/");
     dlog.info("Chat", `Send message${isSkill ? " (skill)" : ""}${pendingImage ? " +image" : ""}: ${trimmed.length > 120 ? trimmed.slice(0, 120) + "…" : trimmed}`, { sessionKey, isSkill });
@@ -411,6 +422,27 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     dlog.info("Thread", `Open thread for message: ${messageId}`);
     dispatch({ type: "OPEN_THREAD", threadId: messageId, messages: [] });
   };
+
+  const handleQuote = useCallback((msg: ChatMessage) => {
+    setQuotedMessage(msg);
+    if (!isMobile) inputRef.current?.focus();
+  }, [isMobile]);
+
+  const handleCopy = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for older browsers / restricted contexts
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  }, []);
 
   /** Handle A2UI action button clicks — sends the action text as a user message */
   const handleA2UIAction = useCallback((action: string) => {
@@ -559,44 +591,46 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
         </div>
       )}
 
-      {/* Channel header */}
-      <div
-        className="flex items-center justify-between px-3 sm:px-5 gap-2 flex-shrink-0"
-        style={{
-          height: 44,
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-h1 truncate" style={{ color: "var(--text-primary)" }}>
-            # {channelName}
-          </span>
-          {selectedAgent && !selectedAgent.isDefault && (
-            <span className="text-caption hidden sm:inline flex-shrink-0" style={{ color: "var(--text-secondary)" }}>
-              — custom channel
+      {/* Channel header — hidden on mobile (MobileLayout already shows channel name) */}
+      {!isMobile && (
+        <div
+          className="flex items-center justify-between px-3 sm:px-5 gap-2 flex-shrink-0"
+          style={{
+            height: 44,
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-h1 truncate" style={{ color: "var(--text-primary)" }}>
+              # {channelName}
             </span>
-          )}
+            {selectedAgent && !selectedAgent.isDefault && (
+              <span className="text-caption hidden sm:inline flex-shrink-0" style={{ color: "var(--text-secondary)" }}>
+                — custom channel
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <svg className="w-3.5 h-3.5 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+            </svg>
+            <ModelSelect
+              value={currentModel ?? ""}
+              onChange={handleModelChange}
+              models={state.models}
+              disabled={!state.openclawConnected}
+              placeholder="No model"
+              compact
+            />
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <svg className="w-3.5 h-3.5 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
-          </svg>
-          <ModelSelect
-            value={currentModel ?? ""}
-            onChange={handleModelChange}
-            models={state.models}
-            disabled={!state.openclawConnected}
-            placeholder="No model"
-            compact
-          />
-        </div>
-      </div>
+      )}
 
       {/* Session tabs — shown for all agents (including default/General) */}
       {showSessionTabs && <SessionTabs channelId={channelId} />}
 
-      {/* Messages – flat-row layout */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* Messages – flat-row layout (overflow-x-hidden prevents horizontal scroll from long URLs/code) */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         {state.messages.length === 0 && (
           <div className="py-12 px-5 text-center">
             <p className="text-caption" style={{ color: "var(--text-muted)" }}>
@@ -615,6 +649,8 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
               msg={msg}
               grouped={isGrouped}
               onOpenThread={() => openThread(msg.id)}
+              onQuote={() => handleQuote(msg)}
+              onCopy={() => handleCopy(msg.text)}
               onAction={handleA2UIAction}
               onResolveAction={(value, label) => handleResolveAction(msg.id, value, label)}
               onStop={handleStop}
@@ -661,6 +697,34 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
             );
           })}
         </div>
+
+        {/* Quote reply preview */}
+        {quotedMessage && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 mb-1 rounded-md text-caption"
+            style={{
+              background: "var(--bg-hover)",
+              borderLeft: "3px solid var(--text-link)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+            </svg>
+            <span className="truncate flex-1">
+              {quotedMessage.sender === "user" ? "You" : "Agent"}: {quotedMessage.text.slice(0, 80)}{quotedMessage.text.length > 80 ? "..." : ""}
+            </span>
+            <button
+              onClick={() => setQuotedMessage(null)}
+              className="p-0.5 rounded hover:bg-[--bg-surface] shrink-0"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         <div
           className="rounded-md"
@@ -788,6 +852,8 @@ function MessageRow({
   msg,
   grouped,
   onOpenThread,
+  onQuote,
+  onCopy,
   onAction,
   onResolveAction,
   onStop,
@@ -795,6 +861,8 @@ function MessageRow({
   msg: ChatMessage;
   grouped: boolean;
   onOpenThread: () => void;
+  onQuote: () => void;
+  onCopy: () => void;
   onAction?: (action: string) => void;
   onResolveAction?: (value: string, label: string) => void;
   onStop?: () => void;
@@ -805,10 +873,44 @@ function MessageRow({
   const initial = msg.sender === "user" ? "U" : "A";
   const replyCount = state.threadReplyCounts[msg.id] ?? 0;
 
+  // Long-press context menu for mobile
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchMoved = useRef(false);
+
+  const handleTouchStart = useCallback(() => {
+    touchMoved.current = false;
+    longPressTimer.current = setTimeout(() => {
+      if (!touchMoved.current) setShowContextMenu(true);
+    }, 500);
+  }, []);
+
+  const handleTouchMove = useCallback(() => {
+    touchMoved.current = true;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
+
+  // Copied feedback
+  const [copied, setCopied] = useState(false);
+  const handleCopyWithFeedback = useCallback(() => {
+    onCopy();
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+    setShowContextMenu(false);
+  }, [onCopy]);
+
   return (
     <div
       className="group relative px-3 sm:px-5 hover:bg-[--bg-hover] transition-colors"
       style={{ paddingTop: grouped ? 2 : 8, paddingBottom: 2 }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onContextMenu={(e) => { e.preventDefault(); setShowContextMenu(true); }}
     >
       <div className="flex gap-2 max-w-message">
         {/* Avatar column */}
@@ -913,7 +1015,7 @@ function MessageRow({
         </div>
       </div>
 
-      {/* Action bar (section 5.3) – appears on hover */}
+      {/* Desktop: Action bar (hover) — Thread + Quote + Copy */}
       <div
         className="absolute top-0 right-5 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 px-1 py-0.5 rounded"
         style={{
@@ -922,13 +1024,103 @@ function MessageRow({
           boxShadow: "var(--shadow-sm)",
         }}
       >
-        <ActionButton label="Reply in thread" icon={
+        <ActionButton label="Reply in thread" onClick={onOpenThread} icon={
           <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
           </svg>
-        } onClick={onOpenThread} />
+        } />
+        <ActionButton label="Quote reply" onClick={() => { onQuote(); }} icon={
+          <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+          </svg>
+        } />
+        <ActionButton label={copied ? "Copied!" : "Copy text"} onClick={handleCopyWithFeedback} icon={
+          copied ? (
+            <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+            </svg>
+          )
+        } />
       </div>
+
+      {/* Mobile: Long-press context menu (bottom sheet) */}
+      {showContextMenu && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center"
+          style={{ background: "rgba(0,0,0,0.4)" }}
+          onClick={() => setShowContextMenu(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-xl overflow-hidden"
+            style={{
+              background: "var(--bg-surface)",
+              paddingBottom: "env(safe-area-inset-bottom, 12px)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Preview of the message being acted on */}
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+              <span className="text-caption" style={{ color: "var(--text-muted)" }}>
+                {msg.sender === "user" ? "You" : "Agent"}
+              </span>
+              <p className="text-body mt-0.5 line-clamp-2" style={{ color: "var(--text-primary)" }}>
+                {msg.text.slice(0, 120)}{msg.text.length > 120 ? "..." : ""}
+              </p>
+            </div>
+
+            <ContextMenuItem
+              label="Reply in thread"
+              icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>}
+              onClick={() => { setShowContextMenu(false); onOpenThread(); }}
+            />
+            <ContextMenuItem
+              label="Quote reply"
+              icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" /></svg>}
+              onClick={() => { setShowContextMenu(false); onQuote(); }}
+            />
+            <ContextMenuItem
+              label="Copy text"
+              icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>}
+              onClick={handleCopyWithFeedback}
+            />
+
+            <button
+              onClick={() => setShowContextMenu(false)}
+              className="w-full py-3 text-body font-bold"
+              style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Context menu item for mobile long-press bottom sheet */
+function ContextMenuItem({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-4 py-3 text-body transition-colors active:bg-[--bg-hover]"
+      style={{ color: "var(--text-primary)" }}
+    >
+      <span style={{ color: "var(--text-secondary)" }}>{icon}</span>
+      {label}
+    </button>
   );
 }
 

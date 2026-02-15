@@ -7,14 +7,24 @@
  *   VITE_FIREBASE_API_KEY=AIzaSy...
  *   VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
  *   VITE_FIREBASE_PROJECT_ID=your-project-id
+ *
+ * For Capacitor iOS/Android, also set:
+ *   VITE_GOOGLE_IOS_CLIENT_ID=xxx.apps.googleusercontent.com
+ *   VITE_GOOGLE_WEB_CLIENT_ID=xxx.apps.googleusercontent.com
  */
 
+import { Capacitor } from "@capacitor/core";
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
   GithubAuthProvider,
+  OAuthProvider,
   signInWithPopup,
+  signInWithCredential,
+  indexedDBLocalPersistence,
+  inMemoryPersistence,
+  setPersistence,
   type Auth,
 } from "firebase/auth";
 
@@ -39,6 +49,12 @@ function getFirebaseAuth(): Auth {
     }
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
+
+    // In Capacitor native, WKWebView's IndexedDB can hang Firebase Auth.
+    // Use in-memory persistence to avoid this.
+    if (Capacitor.isNativePlatform()) {
+      setPersistence(auth, inMemoryPersistence).catch(() => {});
+    }
   }
   return auth;
 }
@@ -51,10 +67,116 @@ export type FirebaseSignInResult = {
   provider: "google" | "github";
 };
 
+// ---------------------------------------------------------------------------
+// Native Google Sign-In via @capgo/capacitor-social-login
+// ---------------------------------------------------------------------------
+
+let _socialLoginInitialized = false;
+
+/** Race a promise against a timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 /**
- * Sign in with Google via popup and return the Firebase ID token.
+ * Initialize the native social login plugin (called once).
+ * On web (non-Capacitor) this is a no-op.
+ */
+async function ensureNativeGoogleInit(): Promise<void> {
+  if (!Capacitor.isNativePlatform() || _socialLoginInitialized) return;
+
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+
+  const iosClientId = import.meta.env.VITE_GOOGLE_IOS_CLIENT_ID as string | undefined;
+  const webClientId = import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID as string | undefined;
+
+  console.log("[NativeGoogleSignIn] initialize: iOSClientId =", iosClientId?.substring(0, 20) + "...", "webClientId =", webClientId?.substring(0, 20) + "...");
+
+  await withTimeout(
+    SocialLogin.initialize({
+      google: {
+        iOSClientId: iosClientId || undefined,
+        iOSServerClientId: webClientId || undefined,
+      },
+    }),
+    10000,
+    "SocialLogin.initialize",
+  );
+
+  _socialLoginInitialized = true;
+  console.log("[NativeGoogleSignIn] initialized OK");
+}
+
+/**
+ * Perform native Google Sign-In on iOS/Android, then exchange the Google
+ * credential for a Firebase ID token via `signInWithCredential`.
+ */
+async function nativeGoogleSignIn(): Promise<FirebaseSignInResult> {
+  console.log("[NativeGoogleSignIn] Step 1: ensureNativeGoogleInit");
+  await ensureNativeGoogleInit();
+
+  console.log("[NativeGoogleSignIn] Step 2: calling SocialLogin.login()");
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+
+  // SocialLogin.login() opens native Google UI — user picks account.
+  // No timeout here because user interaction takes variable time.
+  const res = await SocialLogin.login({
+    provider: "google",
+    options: { scopes: ["email", "profile"] },
+  });
+
+  console.log("[NativeGoogleSignIn] Step 3: SocialLogin.login() returned, responseType =", res?.result?.responseType);
+
+  const googleResult = res.result;
+
+  // Narrow the union: online mode returns idToken + profile, offline returns serverAuthCode
+  if (googleResult.responseType !== "online") {
+    throw new Error(`Google Sign-In returned '${googleResult.responseType}' response; expected 'online'. Full result: ${JSON.stringify(res)}`);
+  }
+
+  const googleIdToken = googleResult.idToken;
+  console.log("[NativeGoogleSignIn] Step 4: idToken present =", !!googleIdToken, ", length =", googleIdToken?.length ?? 0);
+
+  if (!googleIdToken) {
+    throw new Error("Google Sign-In did not return an idToken. Ensure Web Client ID (iOSServerClientId) is correct.");
+  }
+
+  // Send the Google ID token directly to the backend — backend now verifies
+  // both Firebase ID tokens and native Google ID tokens.
+  // (Firebase signInWithCredential hangs in WKWebView on real devices.)
+  console.log("[NativeGoogleSignIn] Step 5: Skipping Firebase client, sending Google ID token directly to backend");
+
+  return {
+    idToken: googleIdToken,
+    email: googleResult.profile.email ?? "",
+    displayName: googleResult.profile.name ?? null,
+    photoURL: googleResult.profile.imageUrl ?? null,
+    provider: "google",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Sign in with Google.
+ * - Web: Firebase popup
+ * - Native (iOS/Android): Native Google Sign-In → Firebase credential
  */
 export async function signInWithGoogle(): Promise<FirebaseSignInResult> {
+  // Native: use @capgo/capacitor-social-login + Firebase signInWithCredential
+  if (Capacitor.isNativePlatform()) {
+    return nativeGoogleSignIn();
+  }
+
+  // Web: use Firebase popup (works fine in browsers)
   const firebaseAuth = getFirebaseAuth();
   const provider = new GoogleAuthProvider();
   provider.addScope("email");
@@ -73,7 +195,10 @@ export async function signInWithGoogle(): Promise<FirebaseSignInResult> {
 }
 
 /**
- * Sign in with GitHub via popup and return the Firebase ID token.
+ * Sign in with GitHub.
+ * - Web: Firebase popup
+ * - Native: Firebase popup (GitHub OAuth works in WKWebView with some config)
+ *   TODO: Implement native GitHub OAuth if popup doesn't work on native.
  */
 export async function signInWithGitHub(): Promise<FirebaseSignInResult> {
   const firebaseAuth = getFirebaseAuth();

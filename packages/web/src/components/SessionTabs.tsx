@@ -7,6 +7,7 @@ import { dlog } from "../debug-log";
 // Session history — tracks per-channel usage order in localStorage
 // ---------------------------------------------------------------------------
 const SESSION_HISTORY_KEY = "botschat:sessionHistory";
+const SESSION_COUNTER_KEY = "botschat:sessionCounter";
 
 /** Get the ordered list of recently-used session IDs for a channel. */
 function getSessionHistory(channelId: string): string[] {
@@ -30,6 +31,43 @@ function recordSessionUsage(channelId: string, sessionId: string) {
     all[channelId] = filtered.slice(0, 50);
     localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(all));
   } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Session counter — per-channel high-water-mark for monotonic session naming
+// ---------------------------------------------------------------------------
+
+/** Extract the numeric suffix from a "Session N" name, or return 0. */
+function extractSessionNumber(name: string): number {
+  const match = name.match(/^Session\s+(\d+)$/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+/** Get the next session number for a channel (monotonically increasing). */
+function getNextSessionNumber(channelId: string, existingSessions: { name: string }[]): number {
+  // High-water-mark from localStorage
+  let hwm = 0;
+  try {
+    const all = JSON.parse(localStorage.getItem(SESSION_COUNTER_KEY) || "{}");
+    hwm = typeof all[channelId] === "number" ? all[channelId] : 0;
+  } catch { /* ignore */ }
+
+  // Max number from existing session names
+  const maxExisting = existingSessions.reduce(
+    (max, s) => Math.max(max, extractSessionNumber(s.name)),
+    0,
+  );
+
+  const next = Math.max(hwm, maxExisting) + 1;
+
+  // Persist the new high-water-mark
+  try {
+    const all = JSON.parse(localStorage.getItem(SESSION_COUNTER_KEY) || "{}");
+    all[channelId] = next;
+    localStorage.setItem(SESSION_COUNTER_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+
+  return next;
 }
 
 /** Remove a session from the history for a channel. */
@@ -125,7 +163,8 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
         return;
       }
 
-      const session = await sessionsApi.create(effectiveChannelId);
+      const nextNum = getNextSessionNumber(effectiveChannelId, sessions);
+      const session = await sessionsApi.create(effectiveChannelId, `Session ${nextNum}`);
       dlog.info("Session", `Created session: ${session.name} (${session.id})`);
       dispatch({ type: "ADD_SESSION", session });
       recordSessionUsage(effectiveChannelId, session.id);
