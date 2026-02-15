@@ -58,37 +58,43 @@ do_start() {
 }
 
 do_sync_plugin() {
-  local REMOTE_USER="mini.local"
-  local REMOTE_DIR="~/Projects/botsChat/packages/plugin"
+  # ── IMPORTANT ──────────────────────────────────────────────────
+  # Development repo and production plugin MUST be kept separate:
+  #   Dev repo:    mini:~/Projects/botschat-app/botsChat/packages/plugin/
+  #   Production:  mini:~/.openclaw/extensions/botschat/
+  # NEVER edit files directly in ~/.openclaw/extensions/botschat/.
+  # Always: edit dev repo → build → deploy artifacts to extensions.
+  # ────────────────────────────────────────────────────────────────
+  local REMOTE="mini.local"
+  local DEV_DIR="~/Projects/botschat-app/botsChat/packages/plugin"
+  local EXT_DIR="~/.openclaw/extensions/botschat"
 
-  info "Syncing plugin to mini.local…"
+  info "Syncing plugin source to mini.local dev repo…"
   rsync -avz --exclude node_modules --exclude .git --exclude dist --exclude .wrangler \
-    packages/plugin/ "$REMOTE_USER:$REMOTE_DIR/"
-  ok "Plugin files synced"
+    packages/plugin/ "$REMOTE:$DEV_DIR/"
+  ok "Plugin source synced → $DEV_DIR"
 
-  info "Building plugin, deploying to extensions, restarting gateway on mini.local…"
-  ssh "$REMOTE_USER" 'export PATH="/opt/homebrew/bin:$PATH"
-cd ~/Projects/botsChat/packages/plugin
+  info "Building plugin in dev repo, deploying to extensions, restarting gateway…"
+  ssh "$REMOTE" "export PATH=\"/opt/homebrew/bin:\$PATH\"
+cd $DEV_DIR
 npm run build
-EXT_DIR=~/.openclaw/extensions/botschat
-rsync -av --delete dist/ "$EXT_DIR/dist/"
-rsync -av bin/ "$EXT_DIR/bin/" 2>/dev/null || true
-cp -f package.json openclaw.plugin.json "$EXT_DIR/" 2>/dev/null || true
-echo "--- Deployed to $EXT_DIR ---"
-pkill -9 -f openclaw-gateway 2>/dev/null || true
-sleep 3
-nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &
-echo "Gateway restarted (PID=$!)"'
-  ok "Plugin synced, deployed to extensions, gateway restarted"
+echo '--- Deploying built artifacts to $EXT_DIR ---'
+rsync -av --delete dist/ $EXT_DIR/dist/
+rsync -av bin/ $EXT_DIR/bin/ 2>/dev/null || true
+cp -f package.json openclaw.plugin.json $EXT_DIR/ 2>/dev/null || true
+echo '--- Restarting gateway via launchctl ---'
+launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway
+echo 'Gateway restarted'"
+  ok "Plugin deployed to extensions, gateway restarted"
 
   sleep 4
   info "Checking connection…"
-  ssh "$REMOTE_USER" 'tail -5 /tmp/openclaw-gateway.log | grep -i "authenticated\|error\|Task scan"'
+  ssh "$REMOTE" 'tail -10 ~/.openclaw/logs/gateway.log | grep -i "authenticated\|error\|Task scan\|botschat"'
 }
 
 do_logs() {
   info "Tailing gateway logs on mini.local…"
-  ssh mini.local 'tail -f /tmp/openclaw-gateway.log'
+  ssh mini.local 'tail -f ~/.openclaw/logs/gateway.log'
 }
 
 # ── Main ─────────────────────────────────────────────────────────────
