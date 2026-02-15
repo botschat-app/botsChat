@@ -124,6 +124,38 @@ export default function App() {
 
   // ---- Auto-login on mount ----
   useEffect(() => {
+    // Dev-token auth bypass: ?dev_token=xxx in URL
+    const params = new URLSearchParams(window.location.search);
+    const devToken = params.get("dev_token");
+    if (devToken) {
+      dlog.info("Auth", "Dev-token login attempt");
+      fetch("/api/dev-auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: devToken }),
+      })
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json() as Promise<{ token: string; userId: string }>;
+        })
+        .then((res) => {
+          setToken(res.token);
+          dispatch({
+            type: "SET_USER",
+            user: { id: res.userId, email: "dev@botschat.test", displayName: "Dev User" },
+          });
+          // Remove dev_token from URL
+          params.delete("dev_token");
+          const clean = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (clean ? `?${clean}` : ""));
+          dlog.info("Auth", `Dev-token login success: ${res.userId}`);
+        })
+        .catch((err) => {
+          dlog.warn("Auth", `Dev-token login failed: ${err}`);
+        });
+      return; // skip normal auto-login
+    }
+
     const token = getToken();
     if (token) {
       dlog.api("Auth", "Auto-login with stored token");

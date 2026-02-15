@@ -10,4 +10,6 @@ export type Env = {
   GOOGLE_IOS_CLIENT_ID?: string;
   /** Canonical public URL override — if set, always use this as cloudUrl. */
   PUBLIC_URL?: string;
+  /** Secret for dev-token auth bypass (automated testing). Endpoint is 404 when unset. */
+  DEV_AUTH_SECRET?: string;
 };

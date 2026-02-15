@@ -12,6 +12,7 @@ import { pairing } from "./routes/pairing.js";
 import { sessions } from "./routes/sessions.js";
 import { upload } from "./routes/upload.js";
 import { setup } from "./routes/setup.js";
+import { devAuth } from "./routes/dev-auth.js";
 
 // Re-export the Durable Object class so wrangler can find it
 export { ConnectionDO } from "./do/connection-do.js";
@@ -83,6 +84,7 @@ app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
 
 // ---- Public routes (no auth) ----
 app.route("/api/auth", auth);
+app.route("/api/dev-auth", devAuth);
 app.route("/api/setup", setup);
 
 // ---- Protected routes (require Bearer token) ----
