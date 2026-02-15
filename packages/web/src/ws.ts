@@ -1,5 +1,6 @@
 /** WebSocket client for connecting to the BotsChat ConnectionDO. */
 
+import { Capacitor } from "@capacitor/core";
 import { dlog } from "./debug-log";
 import { E2eService } from "./e2e";
 import { getToken, tryRefreshAccessToken } from "./api";
@@ -33,10 +34,16 @@ export class BotsChatWSClient {
 
   connect(): void {
     this.intentionalClose = false;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    // Token is NOT included in the URL to avoid leaking it in logs/history.
-    // Authentication is handled via the "auth" message after connection.
-    const url = `${protocol}//${window.location.host}/api/ws/${this.opts.userId}/${this.opts.sessionId}`;
+
+    // In Capacitor (native app), WebView runs from capacitor:// so we must
+    // use the full production WebSocket URL.
+    let url: string;
+    if (Capacitor.isNativePlatform()) {
+      url = `wss://console.botschat.app/api/ws/${this.opts.userId}/${this.opts.sessionId}`;
+    } else {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      url = `${protocol}//${window.location.host}/api/ws/${this.opts.userId}/${this.opts.sessionId}`;
+    }
 
     dlog.info("WS", `Connecting to ${url}`);
     this.ws = new WebSocket(url);

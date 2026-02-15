@@ -16,6 +16,10 @@
     "db:migrate:remote": "wrangler d1 migrations apply botschat-db --remote",
     "typecheck": "tsc --noEmit",
     "build:plugin": "npm run build -w packages/plugin",
+    "ios:build": "npm run build -w packages/web && npx cap sync ios",
+    "ios:open": "npx cap open ios",
+    "ios:run": "npx cap run ios",
+    "ios:sync": "npx cap sync ios",
     "test:e2e": "npx tsx scripts/verify-e2e.ts && npx tsx packages/e2e-crypto/e2e-crypto.test.ts",
     "test:e2e-db": "npx tsx scripts/verify-e2e-db.ts"
   },
@@ -49,10 +53,19 @@
     "url": "git+https://github.com/botschat-app/botsChat.git"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.1.0",
     "typescript": "^5.7.0",
     "wrangler": "^3.100.0"
   },
   "dependencies": {
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/ios": "^8.1.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
+    "@capgo/capacitor-social-login": "^8.3.1",
     "react-resizable-panels": "^4.6.2"
   }
 }

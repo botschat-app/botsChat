@@ -6,6 +6,8 @@ export type Env = {
   ENVIRONMENT: string;
   JWT_SECRET?: string;
   FIREBASE_PROJECT_ID?: string;
+  GOOGLE_WEB_CLIENT_ID?: string;
+  GOOGLE_IOS_CLIENT_ID?: string;
   /** Canonical public URL override — if set, always use this as cloudUrl. */
   PUBLIC_URL?: string;
 };

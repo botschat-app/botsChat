@@ -3,7 +3,7 @@ import { useAppState, useAppDispatch } from "../store";
 import { agentsApi, channelsApi } from "../api";
 import { dlog } from "../debug-log";
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}) {
+export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () => void; onNavigate?: () => void } = {}) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [showCreate, setShowCreate] = useState(false);
@@ -29,6 +29,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}
           sessionKey: created.sessionKey,
         });
         try { localStorage.setItem("botschat_last_agent", created.id); } catch { /* ignore */ }
+        onNavigate?.();
       }
       setShowCreate(false);
       setNewName("");
@@ -41,11 +42,22 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleSelectAgent = (agentId: string, sessionKey: string) => {
-    // Skip if already selected – avoids clearing messages for no reason
-    if (state.selectedAgentId === agentId) return;
+    // Ensure activeView is "messages" — on mobile there's no IconRail, so
+    // if the user was last viewing automations, session loading would be
+    // blocked by the `isMessagesView` guard in App.tsx.
+    if (state.activeView !== "messages") {
+      dispatch({ type: "SET_ACTIVE_VIEW", view: "messages" });
+    }
+    // On mobile, always call onNavigate so tapping the already-selected
+    // channel navigates back to the chat view.
+    if (state.selectedAgentId === agentId) {
+      onNavigate?.();
+      return;
+    }
     const agent = state.agents.find((a) => a.id === agentId);
     dlog.info("Channel", `Selected channel: ${agent?.name ?? agentId} (session=${sessionKey})`);
     dispatch({ type: "SELECT_AGENT", agentId, sessionKey });
+    onNavigate?.();
     // Persist last selected channel so it survives page refresh
     try { localStorage.setItem("botschat_last_agent", agentId); } catch { /* ignore */ }
   };
@@ -80,7 +92,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}
 
   return (
     <div
-      className="flex flex-col h-full"
+      className="flex flex-col"
       style={{ background: "var(--bg-secondary)" }}
     >
       {/* Workspace Switcher */}
@@ -126,6 +138,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}
           label="Channels"
           expanded={channelsExpanded}
           onToggle={() => setChannelsExpanded(!channelsExpanded)}
+          onAdd={(e) => {
+            e.stopPropagation();
+            if (!channelsExpanded) setChannelsExpanded(true);
+            setShowCreate(!showCreate);
+          }}
         />
         {channelsExpanded && (
           <div>
@@ -164,57 +181,47 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings?: () => void } = {}
                 Loading channels…
               </div>
             )}
+            {/* Inline create channel form */}
+            {showCreate && (
+              <div className="px-4 py-2 space-y-2">
+                <input
+                  type="text"
+                  placeholder="Channel name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
+                  className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
+                  style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
+                  autoFocus
+                />
+                <input
+                  type="text"
+                  placeholder="Description (optional)"
+                  value={newDesc}
+                  onChange={(e) => setNewDesc(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
+                  className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
+                  style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCreate}
+                    className="flex-1 px-3 py-1.5 text-caption bg-[--bg-active] text-white rounded-sm font-bold hover:brightness-110"
+                  >
+                    Create
+                  </button>
+                  <button
+                    onClick={() => setShowCreate(false)}
+                    className="px-3 py-1.5 text-caption text-[--text-muted] hover:text-[--text-sidebar]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {/* Create channel */}
-      {showCreate ? (
-        <div className="p-3 space-y-2" style={{ borderTop: "1px solid var(--sidebar-border)" }}>
-          <input
-            type="text"
-            placeholder="Channel name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
-            className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
-            style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
-            autoFocus
-          />
-          <input
-            type="text"
-            placeholder="Description (optional)"
-            value={newDesc}
-            onChange={(e) => setNewDesc(e.target.value)}
-            className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
-            style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleCreate}
-              className="flex-1 px-3 py-1.5 text-caption bg-[--bg-active] text-white rounded-sm font-bold hover:brightness-110"
-            >
-              Create
-            </button>
-            <button
-              onClick={() => setShowCreate(false)}
-              className="px-3 py-1.5 text-caption text-[--text-muted] hover:text-[--text-sidebar]"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="p-3" style={{ borderTop: "1px solid var(--sidebar-border)" }}>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="w-full px-3 py-1.5 text-caption text-[--text-sidebar] hover:text-[--text-sidebar-active] rounded-sm border border-dashed transition-colors"
-            style={{ borderColor: "var(--sidebar-divider)" }}
-          >
-            + New channel
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -223,27 +230,42 @@ function SectionHeader({
   label,
   expanded,
   onToggle,
+  onAdd,
 }: {
   label: string;
   expanded: boolean;
   onToggle: () => void;
+  onAdd?: (e: React.MouseEvent) => void;
 }) {
   return (
-    <button
-      onClick={onToggle}
-      className="w-full flex items-center gap-1 px-4 py-1.5 text-tiny uppercase tracking-wider text-[--text-sidebar] hover:text-[--text-sidebar-active] transition-colors"
-    >
-      <svg
-        className={`w-3 h-3 transition-transform ${expanded ? "rotate-0" : "-rotate-90"}`}
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2}
+    <div className="w-full flex items-center px-4 py-1.5">
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-1 text-tiny uppercase tracking-wider text-[--text-sidebar] hover:text-[--text-sidebar-active] transition-colors"
       >
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-      </svg>
-      {label}
-    </button>
+        <svg
+          className={`w-3 h-3 transition-transform ${expanded ? "rotate-0" : "-rotate-90"}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+        {label}
+      </button>
+      {onAdd && (
+        <button
+          onClick={onAdd}
+          className="ml-auto p-0.5 rounded transition-colors text-[--text-sidebar] hover:text-[--text-sidebar-active] hover:bg-[--sidebar-hover]"
+          title={`New ${label.toLowerCase().replace(/s$/, "")}`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 

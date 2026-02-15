@@ -186,8 +186,9 @@ code:not(pre code) {
   outline-offset: 1px;
 }
 
-/* Transitions for theme switching */
-body, .theme-transition {
+/* Transitions for theme switching — only on opt-in elements, NOT on body
+   (body transitions cause visible jitter during keyboard/layout changes on iOS) */
+.theme-transition {
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -207,6 +208,13 @@ body, .theme-transition {
   body {
     min-height: -webkit-fill-available;
   }
+}
+
+/* Prevent long URLs, passwords, and inline code from overflowing message width */
+.prose a,
+.prose code:not(pre code) {
+  overflow-wrap: break-word;
+  word-break: break-all;
 }
 
 /* Mobile screen transition */

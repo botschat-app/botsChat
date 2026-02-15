@@ -121,6 +121,136 @@ export async function verifyFirebaseIdToken(
   return verifyWithKey(matchingKey, signedContent, signatureBytes, payload, projectId);
 }
 
+// ---------------------------------------------------------------------------
+// Google ID Token verification (for native iOS/Android sign-in)
+// ---------------------------------------------------------------------------
+
+const GOOGLE_OAUTH_JWKS_URL =
+  "https://www.googleapis.com/oauth2/v3/certs";
+
+let cachedGoogleOAuthKeys: JsonWebKey[] | null = null;
+let cachedGoogleOAuthAt = 0;
+
+async function getGoogleOAuthPublicKeys(): Promise<JsonWebKey[]> {
+  const now = Date.now();
+  if (cachedGoogleOAuthKeys && now - cachedGoogleOAuthAt < CACHE_TTL_MS) {
+    return cachedGoogleOAuthKeys;
+  }
+  const resp = await fetch(GOOGLE_OAUTH_JWKS_URL);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch Google OAuth JWKS: ${resp.status}`);
+  }
+  const jwks = (await resp.json()) as { keys: JsonWebKey[] };
+  cachedGoogleOAuthKeys = jwks.keys;
+  cachedGoogleOAuthAt = now;
+  return jwks.keys;
+}
+
+/**
+ * Verify a Google ID token (from native Google Sign-In) and return the payload.
+ * Google ID tokens have iss=accounts.google.com and aud=<web-client-id>.
+ */
+export async function verifyGoogleIdToken(
+  idToken: string,
+  allowedClientIds: string[],
+): Promise<FirebaseTokenPayload> {
+  const { header, payload, signatureBytes, signedContent } =
+    parseJwtUnverified(idToken);
+
+  if (header.alg !== "RS256") {
+    throw new Error(`Unsupported algorithm: ${header.alg}`);
+  }
+
+  // Find matching key from Google's OAuth JWKS
+  let keys = await getGoogleOAuthPublicKeys();
+  let matchingKey = keys.find((k) => (k as { kid?: string }).kid === header.kid);
+  if (!matchingKey) {
+    cachedGoogleOAuthKeys = null;
+    keys = await getGoogleOAuthPublicKeys();
+    matchingKey = keys.find((k) => (k as { kid?: string }).kid === header.kid);
+    if (!matchingKey) {
+      throw new Error(`No matching Google OAuth key for kid: ${header.kid}`);
+    }
+  }
+
+  return verifyGoogleTokenWithKey(matchingKey, signedContent, signatureBytes, payload, allowedClientIds);
+}
+
+async function verifyGoogleTokenWithKey(
+  jwk: JsonWebKey,
+  signedContent: string,
+  signatureBytes: Uint8Array,
+  payload: FirebaseTokenPayload,
+  allowedClientIds: string[],
+): Promise<FirebaseTokenPayload> {
+  const key = await crypto.subtle.importKey(
+    "jwk", jwk,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false, ["verify"],
+  );
+
+  const valid = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5", key, signatureBytes,
+    new TextEncoder().encode(signedContent),
+  );
+  if (!valid) throw new Error("Invalid Google token signature");
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < now) throw new Error("Google token has expired");
+  if (payload.iat > now + 300) throw new Error("Google token issued in the future");
+
+  // Google ID tokens have iss = "accounts.google.com" or "https://accounts.google.com"
+  if (payload.iss !== "accounts.google.com" && payload.iss !== "https://accounts.google.com") {
+    throw new Error(`Invalid Google token issuer: ${payload.iss}`);
+  }
+
+  // Audience must be one of our allowed client IDs
+  if (!allowedClientIds.includes(payload.aud)) {
+    throw new Error(`Invalid Google token audience: ${payload.aud}`);
+  }
+
+  if (!payload.sub) throw new Error("Missing subject in Google token");
+
+  // Synthesize firebase-like fields so the rest of the auth flow works
+  if (!payload.firebase) {
+    payload.firebase = {
+      sign_in_provider: "google.com",
+      identities: { "google.com": [payload.sub] },
+    };
+  }
+
+  return payload;
+}
+
+/**
+ * Detect whether a token is a Firebase ID token or a Google ID token,
+ * and verify accordingly.
+ */
+export async function verifyAnyGoogleToken(
+  idToken: string,
+  firebaseProjectId: string,
+  allowedGoogleClientIds: string[],
+): Promise<FirebaseTokenPayload> {
+  // Peek at the issuer to decide which verification path to use
+  const { payload: peek } = parseJwtUnverified(idToken);
+
+  if (peek.iss === `${FIREBASE_TOKEN_ISSUER_PREFIX}${firebaseProjectId}`) {
+    // Standard Firebase ID token
+    return verifyFirebaseIdToken(idToken, firebaseProjectId);
+  }
+
+  if (peek.iss === "accounts.google.com" || peek.iss === "https://accounts.google.com") {
+    // Native Google ID token (from iOS/Android)
+    return verifyGoogleIdToken(idToken, allowedGoogleClientIds);
+  }
+
+  throw new Error(`Unrecognized token issuer: ${peek.iss}`);
+}
+
+// ---------------------------------------------------------------------------
+// Shared verification helpers
+// ---------------------------------------------------------------------------
+
 async function verifyWithKey(
   jwk: JsonWebKey,
   signedContent: string,

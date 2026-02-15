@@ -23,6 +23,8 @@ const PRODUCTION_ORIGINS = [
   "https://console.botschat.app",
   "https://botschat.app",
   "https://botschat-api.auxtenwpc.workers.dev",
+  "capacitor://localhost",  // iOS Capacitor app
+  "http://localhost",       // Android Capacitor app
 ];
 
 // CORS and security headers — skip for WebSocket upgrade requests

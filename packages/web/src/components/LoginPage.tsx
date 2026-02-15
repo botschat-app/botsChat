@@ -48,7 +48,8 @@ export function LoginPage() {
     });
   }, [firebaseEnabled]);
 
-  const emailEnabled = authConfig?.emailEnabled ?? true;
+  // Email/password login is permanently disabled — only OAuth (Google/GitHub) is allowed.
+  const emailEnabled = false;
   const configLoaded = authConfig !== null;
   const hasAnyLoginMethod = configLoaded && (firebaseEnabled || emailEnabled);
 
@@ -93,6 +94,12 @@ export function LoginPage() {
     setError("");
     setOauthLoading(provider);
 
+    // Timeout protection: if sign-in hangs for >30s, reset the UI
+    const timeout = setTimeout(() => {
+      setOauthLoading(null);
+      setError(`${provider} sign-in timed out. Please try again.`);
+    }, 30000);
+
     try {
       dlog.info("Auth", `Starting ${provider} sign-in`);
       const signInFn = provider === "google" ? signInWithGoogle : signInWithGitHub;
@@ -114,6 +121,7 @@ export function LoginPage() {
         setError(message);
       }
     } finally {
+      clearTimeout(timeout);
       setOauthLoading(null);
     }
   };

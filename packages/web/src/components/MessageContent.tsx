@@ -972,9 +972,11 @@ export function MessageContent({
       {/* Markdown text with enhanced rendering */}
       {processedText ? (
         <div
-          className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-0 prose-code:before:content-none prose-code:after:content-none prose-headings:my-2"
+          className="prose prose-sm max-w-none overflow-hidden prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-0 prose-code:before:content-none prose-code:after:content-none prose-headings:my-2"
           style={{
             color: "var(--text-primary)",
+            overflowWrap: "break-word",
+            wordBreak: "break-word",
             "--tw-prose-headings": "var(--text-primary)",
             "--tw-prose-bold": "var(--text-primary)",
             "--tw-prose-code": "var(--code-text)",
