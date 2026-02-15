@@ -86,6 +86,18 @@ export const botschatPlugin = {
     messageToolHints: () => A2UI_MESSAGE_TOOL_HINTS,
   },
 
+  messaging: {
+    targetResolver: {
+      hint: "Use the session key (e.g. agent:botschat:botschat:u_xxx:ses:ses_xxx)",
+      looksLikeId: (raw: string, _normalized: string) => {
+        const t = raw.trim();
+        if (t.startsWith("agent:") || t.startsWith("botschat:")) return true;
+        if (/^(ses_|u_)/.test(t)) return true;
+        return false;
+      },
+    },
+  },
+
   reload: { configPrefixes: ["channels.botschat"] },
 
   config: {
