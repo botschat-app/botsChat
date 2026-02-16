@@ -54,6 +54,13 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- Permissions for file/photo upload in WebView -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BotsChat needs access to your photo library to send images in chat.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>BotsChat needs camera access to take photos for chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>BotsChat needs microphone access to send voice messages.</string>
 	<!-- Google Sign-In URL scheme (Reversed Client ID from iOS OAuth Client) -->
 	<key>CFBundleURLTypes</key>
 	<array>
