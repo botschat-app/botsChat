@@ -1,14 +1,14 @@
 import WebSocket from "ws";
 import { deriveKey, encryptText, decryptText, toBase64, fromBase64 } from "../packages/e2e-crypto/e2e-crypto.js";
 
-const E2E_PWD = "REDACTED_PASSWORD";
+const E2E_PWD = process.env.TEST_E2E_PASSWORD || "";
 
 async function main() {
   // Login
   const res = await fetch("http://localhost:8787/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "tong@mini.local", password: "REDACTED_PASSWORD" }),
+    body: JSON.stringify({ email: "tong@mini.local", password: process.env.TEST_PASSWORD || "" }),
   });
   if (!res.ok) { console.log("Login failed:", res.status); process.exit(1); }
   const login = await res.json() as { id: string; token: string };

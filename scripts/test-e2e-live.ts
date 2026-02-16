@@ -21,7 +21,7 @@ import assert from "node:assert";
 const API_BASE = "http://localhost:8787";
 const E2E_PASSWORD = "e2e-test-2026";
 const TEST_EMAIL = "tong@mini.local";
-const TEST_PASS = "REDACTED_PASSWORD";
+const TEST_PASS = process.env.TEST_E2E_PASSWORD || "";
 const SECRET_TEXT = `E2E_TEST_SECRET_${Date.now()}`;
 
 async function login(): Promise<{ token: string; userId: string }> {

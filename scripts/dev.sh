@@ -54,7 +54,7 @@ do_build_web() {
 do_start() {
   kill_port 8787
   info "Starting wrangler dev on 0.0.0.0:8787…"
-  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0 --var ENVIRONMENT:development --var DEV_AUTH_SECRET:REDACTED_DEV_SECRET
+  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0 --var ENVIRONMENT:development --var DEV_AUTH_SECRET:"${DEV_AUTH_SECRET:?Set DEV_AUTH_SECRET env var}"
 }
 
 do_sync_plugin() {

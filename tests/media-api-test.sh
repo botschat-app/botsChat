@@ -5,7 +5,7 @@
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8787}"
-SECRET="REDACTED_DEV_SECRET"
+SECRET="${DEV_AUTH_SECRET:?Set DEV_AUTH_SECRET env var}"
 PASS=0
 FAIL=0
 TMPDIR_TEST=$(mktemp -d)

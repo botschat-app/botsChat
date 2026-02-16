@@ -26,8 +26,8 @@
 
 - 项目目录: `/Users/tong/Projects/botschat`
 - API URL: `https://console.botschat.app`
-- DEV_AUTH_SECRET: `REDACTED_DEV_SECRET`
-- Dev 登录 URL: `https://console.botschat.app/?dev_token=REDACTED_DEV_SECRET`
+- DEV_AUTH_SECRET: `<YOUR_DEV_AUTH_SECRET>`
+- Dev 登录 URL: `https://console.botschat.app/?dev_token=<YOUR_DEV_AUTH_SECRET>`
 - Chrome profile: pejdb, CDP port 18800
 - Cron Job ID: e303f552-5dbf-4f48-8ec3-016d042a582e
 
@@ -97,7 +97,7 @@ browser action=act profile="pejdb" request={"kind": "click", "ref": "<ref>"}
 ```bash
 curl -s -X POST https://console.botschat.app/api/dev-auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"secret":"REDACTED_DEV_SECRET"}' | jq .
+  -d '{"secret":"<YOUR_DEV_AUTH_SECRET>"}' | jq .
 ```
 
 通过条件：返回 `{"token":"<jwt>","userId":"dev-test-user"}`
@@ -117,7 +117,7 @@ curl -s -X POST https://console.botschat.app/api/dev-auth/login \
 
 操作：
 1. 启动 Chrome pejdb profile (如果没启动)
-2. 导航到 `https://console.botschat.app/?dev_token=REDACTED_DEV_SECRET`
+2. 导航到 `https://console.botschat.app/?dev_token=<YOUR_DEV_AUTH_SECRET>`
 3. 等待 3 秒
 4. 截图
 
@@ -130,7 +130,7 @@ curl -s -X POST https://console.botschat.app/api/dev-auth/login \
 # 先获取 token
 TOKEN=$(curl -s -X POST https://console.botschat.app/api/dev-auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"secret":"REDACTED_DEV_SECRET"}' | jq -r .token)
+  -d '{"secret":"<YOUR_DEV_AUTH_SECRET>"}' | jq -r .token)
 
 # 创建测试图片
 convert -size 100x100 xc:red /tmp/test-image.png 2>/dev/null || \

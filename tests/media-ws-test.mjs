@@ -20,7 +20,11 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.argv[2] || "http://localhost:8787";
-const SECRET = "REDACTED_DEV_SECRET";
+const SECRET = process.env.DEV_AUTH_SECRET;
+if (!SECRET) {
+  console.error("Set DEV_AUTH_SECRET env var");
+  process.exit(1);
+}
 
 let PASS = 0;
 let FAIL = 0;

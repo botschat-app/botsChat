@@ -12,7 +12,7 @@
  * Prerequisite:
  *   - Chrome open with DevTools MCP running
  *   - Local dev server at http://localhost:8787
- *   - DEV_AUTH_SECRET=REDACTED_DEV_SECRET configured
+ *   - DEV_AUTH_SECRET env var set
  *
  * This test is designed to be run manually with the Chrome DevTools tools,
  * or can be adapted for CI by replacing the browser interaction with Puppeteer.
@@ -21,7 +21,11 @@
  */
 
 const BASE_URL = process.argv[2] || "http://localhost:8787";
-const SECRET = "REDACTED_DEV_SECRET";
+const SECRET = process.env.DEV_AUTH_SECRET;
+if (!SECRET) {
+  console.error("Set DEV_AUTH_SECRET env var");
+  process.exit(1);
+}
 
 console.log(`
 ╔══════════════════════════════════════════════════════════╗
