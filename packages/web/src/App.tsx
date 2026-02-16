@@ -139,15 +139,27 @@ export default function App() {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json() as Promise<{ token: string; userId: string }>;
         })
-        .then((res) => {
+        .then(async (res) => {
           setToken(res.token);
           dispatch({
             type: "SET_USER",
             user: { id: res.userId, email: devUser ? "auxtenwpc@gmail.com" : "dev@botschat.test", displayName: devUser ? "Auxten Wang" : "Dev User" },
           });
-          // Remove dev_token and dev_user from URL
+          // Auto-setup E2E if dev_e2e password provided
+          const devE2e = params.get("dev_e2e");
+          if (devE2e) {
+            try {
+              await E2eService.setPassword(devE2e, res.userId, true);
+              setE2eReady(true);
+              dlog.info("Auth", "Dev E2E key derived successfully");
+            } catch (err) {
+              dlog.warn("Auth", `Dev E2E key derivation failed: ${err}`);
+            }
+          }
+          // Remove dev params from URL
           params.delete("dev_token");
           params.delete("dev_user");
+          params.delete("dev_e2e");
           const clean = params.toString();
           window.history.replaceState({}, "", window.location.pathname + (clean ? `?${clean}` : ""));
           dlog.info("Auth", `Dev-token login success: ${res.userId}`);
