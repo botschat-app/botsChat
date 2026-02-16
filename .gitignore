@@ -22,7 +22,7 @@ dist/
 .vscode/
 *.swp
 *.swo
-*~# Logs
+*~ # Logs
 *.log
 npm-debug.log*
 
@@ -35,9 +35,7 @@ Thumbs.db
 
 # AI / Cursor generated plan files
 *.plan.md
-*.code-workspace
-
-# Capacitor / iOS
+*.code-workspace # Capacitor / iOS
 ios/App/App/public/
 ios/App/Pods/
 ios/DerivedData/

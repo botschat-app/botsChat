@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "../../openclaw/openclaw"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../web"
+		}
+	],
+	"settings": {
+		"typescript.reportStyleChecksAsWarnings": false,
+		"typescript.tsdk": "node_modules/typescript/lib",
+		"typescript.experimental.useTsgo": true,
+		"git.ignoreLimitWarning": true
+	}
+}
