@@ -108,12 +108,13 @@ export const E2eService = {
 
   /**
    * Encrypt text using the current key.
-   * Generates a random messageId (UUID) as contextId/nonce source.
+   * If contextId is provided, uses it as the nonce source (for preserving
+   * existing messageIds). Otherwise generates a random UUID.
    * Returns { ciphertext: base64, messageId: string }
    */
-  async encrypt(text: string): Promise<{ ciphertext: string; messageId: string }> {
+  async encrypt(text: string, contextId?: string): Promise<{ ciphertext: string; messageId: string }> {
     if (!currentKey) throw new Error("E2E key not set");
-    const messageId = crypto.randomUUID();
+    const messageId = contextId || crypto.randomUUID();
     const encrypted = await encryptText(currentKey, text, messageId);
     return { ciphertext: toBase64(encrypted), messageId };
   },

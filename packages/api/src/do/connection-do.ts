@@ -639,16 +639,11 @@ export class ConnectionDO implements DurableObject {
         return null;
       }
 
-      const contentType = response.headers.get("Content-Type") ?? "image/png";
-      // Validate that the response is actually an image
-      if (!contentType.startsWith("image/")) {
-        console.warn(`[DO] cacheExternalMedia: non-image Content-Type "${contentType}", skipping ${url.slice(0, 120)}`);
-        return null;
-      }
+      const contentType = response.headers.get("Content-Type") ?? "application/octet-stream";
 
-      // Reject SVG (can contain scripts — XSS vector)
-      if (contentType.includes("svg")) {
-        console.warn(`[DO] cacheExternalMedia: blocked SVG content from ${url.slice(0, 120)}`);
+      // Reject SVG (can contain scripts — XSS vector) and executable types
+      if (contentType.includes("svg") || contentType.includes("javascript") || contentType.includes("executable")) {
+        console.warn(`[DO] cacheExternalMedia: blocked dangerous Content-Type "${contentType}" from ${url.slice(0, 120)}`);
         return null;
       }
 
@@ -670,14 +665,18 @@ export class ConnectionDO implements DurableObject {
         return null;
       }
 
-      // Determine extension from Content-Type (no SVG)
+      // Determine extension from Content-Type
       const extMap: Record<string, string> = {
         "image/png": "png",
         "image/jpeg": "jpg",
         "image/gif": "gif",
         "image/webp": "webp",
+        "application/pdf": "pdf",
+        "audio/mpeg": "mp3",
+        "audio/wav": "wav",
+        "video/mp4": "mp4",
       };
-      const ext = extMap[contentType] ?? "png";
+      const ext = extMap[contentType] ?? (contentType.startsWith("image/") ? "png" : "bin");
       const key = `media/${userId}/${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
 
       // Upload to R2

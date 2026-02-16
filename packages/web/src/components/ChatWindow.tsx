@@ -265,11 +265,11 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     inputRef.current?.focus();
   }, []);
 
-  // Image upload helpers
+  // File upload helpers
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) return;
-    const preview = URL.createObjectURL(file);
+    if (!file) return;
+    const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
     setPendingImage({ file, preview });
     e.target.value = "";
     inputRef.current?.focus();
@@ -339,8 +339,8 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     e.stopPropagation();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith("image/")) {
-      const preview = URL.createObjectURL(file);
+    if (file) {
+      const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
       setPendingImage({ file, preview });
       inputRef.current?.focus();
     }
@@ -733,21 +733,35 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
             background: "var(--bg-surface)",
           }}
         >
-          {/* Image preview */}
+          {/* File/image preview */}
           {pendingImage && (
             <div className="px-3 pt-2 flex items-start gap-2">
               <div className="relative">
-                <img
-                  src={pendingImage.preview}
-                  alt="Preview"
-                  className="max-w-[120px] max-h-[80px] rounded-md object-contain"
-                  style={{ border: "1px solid var(--border)" }}
-                />
+                {pendingImage.preview ? (
+                  <img
+                    src={pendingImage.preview}
+                    alt="Preview"
+                    className="max-w-[120px] max-h-[80px] rounded-md object-contain"
+                    style={{ border: "1px solid var(--border)" }}
+                  />
+                ) : (
+                  <div
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md text-caption"
+                    style={{ border: "1px solid var(--border)", background: "var(--bg-hover)" }}
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                    <span className="truncate max-w-[100px]" style={{ color: "var(--text-secondary)" }}>
+                      {pendingImage.file.name}
+                    </span>
+                  </div>
+                )}
                 <button
                   onClick={clearPendingImage}
                   className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-white opacity-80 hover:opacity-100 transition-opacity"
                   style={{ background: "#e74c3c", fontSize: 11 }}
-                  title="Remove image"
+                  title="Remove file"
                 >
                   ✕
                 </button>
@@ -790,7 +804,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,application/pdf,.txt,.csv,.md,.json,.zip,.gz,.mp3,.wav,.mp4,.mov"
                 className="hidden"
                 onChange={handleFileSelect}
               />

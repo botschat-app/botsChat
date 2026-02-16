@@ -74,10 +74,11 @@ channels.post("/", async (c) => {
     .bind(taskId, id, "Ad Hoc Chat", "adhoc", sessionKey)
     .run();
 
-  // Auto-create a default session
+  // Auto-create a default session (INSERT OR IGNORE to handle duplicate session_key
+  // gracefully — can happen if user re-creates a channel with the same name)
   const sessionId = generateId("ses_");
   await c.env.DB.prepare(
-    "INSERT INTO sessions (id, channel_id, user_id, name, session_key) VALUES (?, ?, ?, ?, ?)",
+    "INSERT OR IGNORE INTO sessions (id, channel_id, user_id, name, session_key) VALUES (?, ?, ?, ?, ?)",
   )
     .bind(sessionId, id, userId, "Session 1", sessionKey)
     .run();

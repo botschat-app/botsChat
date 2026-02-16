@@ -171,14 +171,19 @@ export class BotsChatWSClient {
       // E2E Encryption for user messages
       if (msg.type === "user.message" && E2eService.hasKey() && typeof msg.text === "string") {
           try {
-              const { ciphertext, messageId } = await E2eService.encrypt(msg.text);
+              // Use the existing messageId as contextId for encryption nonce,
+              // so decryption on the plugin side uses the same ID.
+              const existingId = (msg.messageId as string) || undefined;
+              const { ciphertext, messageId } = await E2eService.encrypt(msg.text, existingId);
               msg.text = ciphertext;
-              msg.messageId = messageId;
+              // Only set messageId if we didn't have one — preserve the original
+              // so message IDs stay consistent between local state and server.
+              if (!existingId) {
+                msg.messageId = messageId;
+              }
               msg.encrypted = true;
           } catch (err) {
               dlog.error("E2E", "Encryption failed", err);
-              // Fail? or send as plaintext?
-              // Security first: if key exists but encrypt fails, abort.
               return; 
           }
       }
