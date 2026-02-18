@@ -20,6 +20,10 @@
     "ios:open": "npx cap open ios",
     "ios:run": "npx cap run ios",
     "ios:sync": "npx cap sync ios",
+    "android:build": "npm run build -w packages/web && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:run": "npx cap run android",
+    "android:sync": "npx cap sync android",
     "test:e2e": "npx tsx scripts/verify-e2e.ts && npx tsx packages/e2e-crypto/e2e-crypto.test.ts",
     "test:e2e-db": "npx tsx scripts/verify-e2e-db.ts"
   },
@@ -58,9 +62,11 @@
     "wrangler": "^3.100.0"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/core": "^8.1.0",
     "@capacitor/haptics": "^8.0.0",
+    "@capacitor/android": "^8.1.0",
     "@capacitor/ios": "^8.1.0",
     "@capacitor/keyboard": "^8.0.0",
     "@capacitor/splash-screen": "^8.0.1",
