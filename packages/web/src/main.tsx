@@ -11,7 +11,8 @@ initAnalytics();
 if (Capacitor.isNativePlatform()) {
   // Configure status bar and keyboard for native app
   import("@capacitor/status-bar").then(({ StatusBar, Style }) => {
-    StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+    const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+    StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(() => {});
     StatusBar.setOverlaysWebView({ overlay: true }).catch(() => {});
   });
   import("@capacitor/keyboard").then(({ Keyboard }) => {

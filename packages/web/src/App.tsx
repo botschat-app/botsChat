@@ -97,9 +97,14 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("botschat_theme", theme);
-    // Sync PWA theme-color meta tag with current theme
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", theme === "dark" ? "#1A1D21" : "#FFFFFF");
+    // Sync native status bar style on Capacitor
+    if (Capacitor.isNativePlatform()) {
+      import("@capacitor/status-bar").then(({ StatusBar, Style }) => {
+        StatusBar.setStyle({ style: theme === "dark" ? Style.Dark : Style.Light }).catch(() => {});
+      });
+    }
   }, [theme]);
 
   // Persist active view (messages / automations)

@@ -1,13 +1,15 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <script>
+      (function(){var s=localStorage.getItem("botschat_theme");var t=s==="light"||s==="dark"?s:window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.setAttribute("data-theme",t)})();
+    </script>
 
     <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.json" />
 
-    <!-- Theme color — matches dark theme bg -->
     <meta name="theme-color" content="#1A1D21" />
 
     <!-- iOS PWA support -->
