@@ -8,9 +8,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Register for remote push notifications
-        UNUserNotificationCenter.current().delegate = self
-        application.registerForRemoteNotifications()
         return true
     }
 

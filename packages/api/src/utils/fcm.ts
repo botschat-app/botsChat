@@ -78,24 +78,9 @@ export async function sendPushNotification(opts: PushPayload): Promise<boolean> 
   const message = {
     message: {
       token: opts.fcmToken,
-      // Data-only message — no "notification" field.
-      // Client receives the data and shows a local notification after decryption.
       data: opts.data,
-      // Platform-specific overrides for data-only delivery
       android: {
         priority: "high" as const,
-      },
-      apns: {
-        headers: {
-          "apns-priority": "10",
-          "apns-push-type": "background",
-        },
-        payload: {
-          aps: {
-            "content-available": 1,
-            sound: "default",
-          },
-        },
       },
       webpush: {
         headers: {

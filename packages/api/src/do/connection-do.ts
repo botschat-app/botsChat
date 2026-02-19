@@ -1,6 +1,7 @@
 import type { Env } from "../env.js";
 import { verifyToken, getJwtSecret, signMediaUrl } from "../utils/auth.js";
 import { getFcmAccessToken, sendPushNotification } from "../utils/fcm.js";
+import { sendApnsNotification, type ApnsConfig } from "../utils/apns.js";
 import { generateId as generateIdUtil } from "../utils/id.js";
 import { randomUUID } from "../utils/uuid.js";
 
@@ -325,7 +326,7 @@ export class ConnectionDO implements DurableObject {
     if (
       (msg.type === "agent.text" || msg.type === "agent.media" || msg.type === "agent.a2ui") &&
       this.foregroundSessions.size === 0 &&
-      this.env.FCM_SERVICE_ACCOUNT_JSON
+      (this.env.FCM_SERVICE_ACCOUNT_JSON || this.env.APNS_AUTH_KEY)
     ) {
       this.sendPushNotifications(msg).catch((err) => {
         console.error("[DO] Push notification failed:", err);
@@ -599,7 +600,9 @@ export class ConnectionDO implements DurableObject {
   /**
    * Send push notifications to all of the user's registered devices.
    * Called when an agent message arrives and no browser session is in foreground.
-   * Sends data-only FCM messages so clients can decrypt E2E content before showing.
+   *
+   * iOS tokens go directly to APNs (Capacitor returns raw APNs device tokens).
+   * Web/Android tokens go through FCM HTTP v1 API.
    */
   private async sendPushNotifications(msg: Record<string, unknown>): Promise<void> {
     const userId = await this.state.storage.get<string>("userId");
@@ -612,8 +615,8 @@ export class ConnectionDO implements DurableObject {
       .all<{ id: string; token: string; platform: string }>();
 
     if (!results || results.length === 0) return;
+    console.log(`[DO] Push: ${results.length} token(s) for ${userId} (ios: ${results.filter((r) => r.platform === "ios").length})`);
 
-    // Build data payload — includes ciphertext so the client can decrypt
     const data: Record<string, string> = {
       type: msg.type as string,
       sessionKey: (msg.sessionKey as string) ?? "",
@@ -621,30 +624,65 @@ export class ConnectionDO implements DurableObject {
       encrypted: msg.encrypted ? "1" : "0",
     };
 
+    let notifBody = "New message";
     if (msg.type === "agent.text") {
       data.text = (msg.text as string) ?? "";
+      if (!msg.encrypted && data.text) {
+        notifBody = data.text.length > 100 ? data.text.slice(0, 100) + "…" : data.text;
+      } else if (msg.encrypted) {
+        notifBody = "New encrypted message";
+      }
     } else if (msg.type === "agent.media") {
       data.text = (msg.caption as string) || "";
       data.mediaUrl = (msg.mediaUrl as string) ?? "";
+      notifBody = data.text || "Sent a media file";
     } else if (msg.type === "agent.a2ui") {
       data.text = "New interactive message";
+      notifBody = "New interactive message";
     }
 
-    const accessToken = await getFcmAccessToken(this.env.FCM_SERVICE_ACCOUNT_JSON!);
-    const projectId = this.env.FIREBASE_PROJECT_ID ?? "botschat-130ff";
-
+    const iosTokens = results.filter((r) => r.platform === "ios");
+    const otherTokens = results.filter((r) => r.platform !== "ios");
     const invalidTokenIds: string[] = [];
-    await Promise.allSettled(
-      results.map(async (row) => {
-        const ok = await sendPushNotification({
-          accessToken,
-          projectId,
-          fcmToken: row.token,
-          data,
-        });
-        if (!ok) invalidTokenIds.push(row.id);
-      }),
-    );
+
+    // iOS: send via APNs directly (Capacitor registers raw APNs device tokens)
+    if (iosTokens.length > 0 && this.env.APNS_AUTH_KEY) {
+      const apnsConfig: ApnsConfig = {
+        authKey: this.env.APNS_AUTH_KEY,
+        keyId: this.env.APNS_KEY_ID ?? "",
+        teamId: this.env.APNS_TEAM_ID ?? "",
+        bundleId: "app.botschat.console",
+      };
+      await Promise.allSettled(
+        iosTokens.map(async (row) => {
+          const ok = await sendApnsNotification({
+            config: apnsConfig,
+            deviceToken: row.token,
+            title: "BotsChat",
+            body: notifBody,
+            data,
+          });
+          if (!ok) invalidTokenIds.push(row.id);
+        }),
+      );
+    }
+
+    // Web + Android: send via FCM
+    if (otherTokens.length > 0 && this.env.FCM_SERVICE_ACCOUNT_JSON) {
+      const accessToken = await getFcmAccessToken(this.env.FCM_SERVICE_ACCOUNT_JSON);
+      const projectId = this.env.FIREBASE_PROJECT_ID ?? "botschat-130ff";
+      await Promise.allSettled(
+        otherTokens.map(async (row) => {
+          const ok = await sendPushNotification({
+            accessToken,
+            projectId,
+            fcmToken: row.token,
+            data,
+          });
+          if (!ok) invalidTokenIds.push(row.id);
+        }),
+      );
+    }
 
     // Clean up invalid/expired tokens
     for (const id of invalidTokenIds) {

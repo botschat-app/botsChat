@@ -183,15 +183,12 @@ async function initNativePush(): Promise<void> {
       dlog.error("Push", "Native push registration failed", error);
     });
 
-    // Data-only messages arrive here in foreground — suppress (WS handles it)
     PushNotifications.addListener("pushNotificationReceived", (_notification) => {
       dlog.info("Push", "Foreground native notification (suppressed)");
     });
 
-    // User tapped a notification (app was in background)
     PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
       dlog.info("Push", "Notification tapped", action);
-      // TODO: navigate to specific session from action.notification.data
     });
   } catch (err) {
     dlog.error("Push", "Native push init failed", err);
