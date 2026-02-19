@@ -82,9 +82,6 @@ export async function sendPushNotification(opts: PushPayload): Promise<boolean> 
     data: opts.data,
     android: {
       priority: "high" as const,
-      ...(opts.notification && {
-        notification: opts.notification,
-      }),
     },
     webpush: {
       headers: {
@@ -92,7 +89,7 @@ export async function sendPushNotification(opts: PushPayload): Promise<boolean> 
       },
     },
   };
-  if (opts.notification && !msg.webpush) {
+  if (opts.notification) {
     msg.notification = opts.notification;
   }
   const message = { message: msg };
@@ -106,13 +103,15 @@ export async function sendPushNotification(opts: PushPayload): Promise<boolean> 
     body: JSON.stringify(message),
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error(`[FCM] Send failed for token ...${opts.fcmToken.slice(-8)}: ${res.status} ${err}`);
-    // Token invalid/expired — caller should remove it
-    if (res.status === 404 || res.status === 410) return false;
+  if (res.ok) {
+    console.log(`[FCM] Sent to ...${opts.fcmToken.slice(-8)} (notification: ${!!opts.notification})`);
+    return true;
   }
-  return res.ok;
+
+  const err = await res.text();
+  console.error(`[FCM] Send failed for token ...${opts.fcmToken.slice(-8)}: ${res.status} ${err}`);
+  if (res.status === 404 || res.status === 410) return false;
+  return false;
 }
 
 // ---- Crypto helpers for RS256 JWT signing ----

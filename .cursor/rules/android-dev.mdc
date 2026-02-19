@@ -1,0 +1,124 @@
+---
+description: Android emulator and debugging workflow
+globs: ["android/**", "packages/web/src/**", "packages/api/src/**"]
+---
+
+# Android 开发与调试
+
+## 环境变量（必须在每个 shell 命令前设置）
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+export ANDROID_HOME=$(brew --prefix)/share/android-commandlinetools
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
+```
+
+> JDK 21 是 Capacitor Android 编译的最低要求（capacitor-android 需要 source release 21）。
+> 系统默认 Java 是 1.8，**不能用**，必须显式设置 `JAVA_HOME`。
+
+## 可用 AVD
+
+| 名称 | 设备 | API |
+|------|------|-----|
+| `Pixel_7_API_35` | Pixel 7 | Android 15 (google_apis/arm64) |
+| `Tablet_10_API_35` | 10.1" 平板 | Android 15 |
+| `Tablet_10_HD_API_35` | Pixel C | Android 15 |
+| `Tablet_7_API_35` | 7" 平板 | Android 15 |
+
+## 快速启动模拟器
+
+```bash
+# 有窗口（可交互）
+emulator -avd Pixel_7_API_35 -no-audio -gpu swiftshader_indirect
+
+# 无窗口（CI / 后台测试）
+emulator -avd Pixel_7_API_35 -no-window -no-audio -gpu swiftshader_indirect
+```
+
+等待启动完成：
+
+```bash
+adb wait-for-device
+adb shell getprop sys.boot_completed  # 输出 "1" 表示启动完成
+```
+
+## 构建安装 Android App
+
+```bash
+# 1. 构建 web 前端
+npm run build -w packages/web
+
+# 2. 同步到 Android
+npx cap sync android
+
+# 3. Gradle 构建 APK
+cd android && ./gradlew assembleDebug && cd ..
+
+# 4. 安装到模拟器/设备
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+# 5. 启动
+adb shell am start -n app.botschat.console/.MainActivity
+```
+
+一行命令完成全部：
+
+```bash
+npm run build -w packages/web && npx cap sync android && \
+  cd android && ./gradlew assembleDebug && cd .. && \
+  adb install -r android/app/build/outputs/apk/debug/app-debug.apk && \
+  adb shell am start -n app.botschat.console/.MainActivity
+```
+
+## 模拟器操作
+
+```bash
+# Home 键（切到后台）
+adb shell input keyevent KEYCODE_HOME
+
+# 返回键
+adb shell input keyevent KEYCODE_BACK
+
+# 打开通知栏
+adb shell cmd statusbar expand-notifications
+
+# 查看 logcat（过滤 BotsChat）
+adb logcat -s "Capacitor" "CapacitorPushNotifications" "FirebaseMessaging"
+
+# 截图
+adb exec-out screencap -p > screenshot.png
+```
+
+## Push 通知调试
+
+Android push 通过 FCM 发送。调试要点：
+
+1. **检查 token 注册**：
+   ```bash
+   npx wrangler d1 execute botschat-db --remote \
+     --command "SELECT platform, substr(token,1,20), length(token) FROM push_tokens"
+   ```
+   Android FCM token 约 142 字符，iOS APNs token 为 64 字符。
+
+2. **检查 FCM secret 是否配置**：
+   ```bash
+   npx wrangler secret list --config wrangler.toml
+   # 必须包含 FCM_SERVICE_ACCOUNT_JSON
+   ```
+
+3. **实时查看推送日志**：
+   ```bash
+   npx wrangler tail --config wrangler.toml --format pretty
+   # 正常应看到: [FCM] Sent to ...xxx (notification: true)
+   ```
+
+4. **常见问题**：
+   - `FCM_SERVICE_ACCOUNT_JSON` 未配置 → FCM 发送被跳过，无日志
+   - `notification` 放在 `android.notification` 而非 top-level → 后台静默不显示
+   - 模拟器需要 Google Play Services（使用 `google_apis` system image）
+
+## 关闭模拟器
+
+```bash
+adb emu kill
+```
