@@ -642,8 +642,10 @@ export class ConnectionDO implements DurableObject {
     }
 
     const iosTokens = results.filter((r) => r.platform === "ios");
-    const otherTokens = results.filter((r) => r.platform !== "ios");
+    const androidTokens = results.filter((r) => r.platform === "android");
+    const webTokens = results.filter((r) => r.platform === "web");
     const invalidTokenIds: string[] = [];
+    const notification = { title: "BotsChat", body: notifBody };
 
     // iOS: send via APNs directly (Capacitor registers raw APNs device tokens)
     if (iosTokens.length > 0 && this.env.APNS_AUTH_KEY) {
@@ -667,12 +669,30 @@ export class ConnectionDO implements DurableObject {
       );
     }
 
-    // Web + Android: send via FCM
-    if (otherTokens.length > 0 && this.env.FCM_SERVICE_ACCOUNT_JSON) {
+    // Android: FCM with notification payload (data-only is silent in background)
+    if (androidTokens.length > 0 && this.env.FCM_SERVICE_ACCOUNT_JSON) {
       const accessToken = await getFcmAccessToken(this.env.FCM_SERVICE_ACCOUNT_JSON);
       const projectId = this.env.FIREBASE_PROJECT_ID ?? "botschat-130ff";
       await Promise.allSettled(
-        otherTokens.map(async (row) => {
+        androidTokens.map(async (row) => {
+          const ok = await sendPushNotification({
+            accessToken,
+            projectId,
+            fcmToken: row.token,
+            data,
+            notification,
+          });
+          if (!ok) invalidTokenIds.push(row.id);
+        }),
+      );
+    }
+
+    // Web: FCM data-only (Service Worker decrypts + shows notification)
+    if (webTokens.length > 0 && this.env.FCM_SERVICE_ACCOUNT_JSON) {
+      const accessToken = await getFcmAccessToken(this.env.FCM_SERVICE_ACCOUNT_JSON);
+      const projectId = this.env.FIREBASE_PROJECT_ID ?? "botschat-130ff";
+      await Promise.allSettled(
+        webTokens.map(async (row) => {
           const ok = await sendPushNotification({
             accessToken,
             projectId,

@@ -65,6 +65,8 @@ export type PushPayload = {
   fcmToken: string;
   /** Data payload — sent as FCM data-only message so client can decrypt + show notification. */
   data: Record<string, string>;
+  /** If set, include a visible notification (used for Android where data-only is silent in background). */
+  notification?: { title: string; body: string };
 };
 
 /**
@@ -75,20 +77,25 @@ export type PushPayload = {
 export async function sendPushNotification(opts: PushPayload): Promise<boolean> {
   const url = `https://fcm.googleapis.com/v1/projects/${opts.projectId}/messages:send`;
 
-  const message = {
-    message: {
-      token: opts.fcmToken,
-      data: opts.data,
-      android: {
-        priority: "high" as const,
-      },
-      webpush: {
-        headers: {
-          Urgency: "high",
-        },
+  const msg: Record<string, unknown> = {
+    token: opts.fcmToken,
+    data: opts.data,
+    android: {
+      priority: "high" as const,
+      ...(opts.notification && {
+        notification: opts.notification,
+      }),
+    },
+    webpush: {
+      headers: {
+        Urgency: "high",
       },
     },
   };
+  if (opts.notification && !msg.webpush) {
+    msg.notification = opts.notification;
+  }
+  const message = { message: msg };
 
   const res = await fetch(url, {
     method: "POST",
