@@ -117,24 +117,17 @@ Clone, install, and run the server on your machine. Wrangler uses [Miniflare](ht
 git clone https://github.com/botschat-app/botsChat.git
 cd botsChat
 npm install
-# One-command startup: build web → migrate D1 → start on 0.0.0.0:8787
 ./scripts/dev.sh
 ```
 
-Or step by step:
-
-```bash
-npm run build -w packages/web                          # Build the React frontend
-npm run db:migrate                                     # Apply D1 migrations (local)
-npx wrangler dev --config wrangler.toml --ip 0.0.0.0   # Start on port 8787
-```
-
-Open `http://localhost:8787` in your browser.
+One command does everything: build frontend → migrate database → start server → launch Mock AI → open browser with auto-login. No environment variables to set, no separate terminals to manage.
 
 Other dev commands:
 
 ```bash
-./scripts/dev.sh reset     # Nuke local DB → re-migrate → start
+./scripts/dev.sh reset     # Nuke local DB → re-migrate → start full dev env
+./scripts/dev.sh server    # Server only (no mock AI, no browser)
+./scripts/dev.sh mock      # Start mock OpenClaw standalone (foreground)
 ./scripts/dev.sh migrate   # Only run D1 migrations
 ./scripts/dev.sh build     # Only build web frontend
 ./scripts/dev.sh sync      # Sync plugin to remote OpenClaw host + restart gateway
@@ -282,16 +275,19 @@ openclaw plugins remove botschat
 
 ## Development
 
-### Build the plugin
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full development guide — local setup, Mock OpenClaw for testing, architecture principles, WebSocket protocol, database migrations, and more.
+
+### Quick Start
 
 ```bash
-npm run build:plugin
+./scripts/dev.sh         # Build + migrate + start server + mock AI + open browser
 ```
 
-### Type-check everything
+### Build
 
 ```bash
-npm run typecheck
+npm run build -w packages/web      # Build frontend
+npm run build -w packages/plugin   # Build plugin
 ```
 
 

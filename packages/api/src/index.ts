@@ -11,6 +11,7 @@ import { models } from "./routes/models.js";
 import { pairing } from "./routes/pairing.js";
 import { sessions } from "./routes/sessions.js";
 import { upload } from "./routes/upload.js";
+import { push } from "./routes/push.js";
 import { setup } from "./routes/setup.js";
 import { devAuth } from "./routes/dev-auth.js";
 
@@ -276,6 +277,7 @@ protectedApp.route("/channels/:channelId/tasks/:taskId/jobs", jobs);
 // Nested session routes under /api/channels/:channelId/sessions
 protectedApp.route("/channels/:channelId/sessions", sessions);
 protectedApp.route("/pairing-tokens", pairing);
+protectedApp.route("/push-tokens", push);
 protectedApp.route("/upload", upload);
 
 // ---- Media serving route (signed URL or Bearer auth) ----

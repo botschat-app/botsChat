@@ -1,23 +1,43 @@
 #!/usr/bin/env bash
 # BotsChat local dev startup script
 # Usage:
-#   ./scripts/dev.sh          — build web + migrate + start server
-#   ./scripts/dev.sh reset    — nuke local DB, re-migrate, then start
+#   ./scripts/dev.sh          — full dev env: build + migrate + server + mock AI + open browser
+#   ./scripts/dev.sh reset    — nuke local DB, re-migrate, then start full dev env
+#   ./scripts/dev.sh server   — only start wrangler dev server (no mock, no browser)
 #   ./scripts/dev.sh migrate  — only run D1 migrations (no server)
 #   ./scripts/dev.sh build    — only build web frontend (no server)
 #   ./scripts/dev.sh sync     — sync plugin to mini.local + rebuild + restart gateway
 #   ./scripts/dev.sh logs     — tail gateway logs on mini.local
+#   ./scripts/dev.sh mock     — start mock OpenClaw standalone (foreground)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
+# ── Auto-set DEV_AUTH_SECRET ──────────────────────────────────────────
+# For local dev, any string works. Use a fixed default so new developers
+# can run `./scripts/dev.sh` without setting env vars first.
+if [[ -z "${DEV_AUTH_SECRET:-}" ]]; then
+  DEV_AUTH_SECRET="botschat-local-dev-secret"
+  export DEV_AUTH_SECRET
+fi
+
 # ── Colours ──────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; DIM='\033[2m'; NC='\033[0m'
 info()  { echo -e "${CYAN}▸${NC} $*"; }
 ok()    { echo -e "${GREEN}✔${NC} $*"; }
 warn()  { echo -e "${YELLOW}▲${NC} $*"; }
 fail()  { echo -e "${RED}✖${NC} $*"; exit 1; }
+
+# ── Process tracking ─────────────────────────────────────────────────
+WRANGLER_PID=""
+MOCK_PID=""
+
+cleanup() {
+  [[ -n "$MOCK_PID" ]] && kill "$MOCK_PID" 2>/dev/null || true
+  [[ -n "$WRANGLER_PID" ]] && kill "$WRANGLER_PID" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -29,6 +49,55 @@ kill_port() {
     warn "Killing process(es) on port $port: $pids"
     echo "$pids" | xargs kill -9 2>/dev/null || true
     sleep 1
+  fi
+}
+
+wait_for_server() {
+  info "Waiting for server…"
+  local max=60 i=0
+  while ! curl -sf --max-time 1 -o /dev/null http://localhost:8787/ 2>/dev/null; do
+    sleep 1
+    i=$((i + 1))
+    if [[ $i -ge $max ]]; then
+      fail "Server didn't start within ${max}s"
+    fi
+  done
+}
+
+get_mock_token() {
+  local BASE_URL="http://localhost:8787"
+  local TOKEN_JSON AUTH_TOKEN PAT_JSON PAT
+
+  TOKEN_JSON=$(curl -sf -X POST "$BASE_URL/api/dev-auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"secret\":\"$DEV_AUTH_SECRET\",\"userId\":\"dev-test-user\"}" 2>&1) || {
+    fail "Cannot reach $BASE_URL — is the server running?"
+  }
+  AUTH_TOKEN=$(echo "$TOKEN_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || {
+    fail "Failed to parse auth token: $TOKEN_JSON"
+  }
+
+  PAT_JSON=$(curl -sf -X POST "$BASE_URL/api/pairing-tokens" \
+    -H "Authorization: Bearer $AUTH_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{"label":"mock-openclaw"}' 2>&1) || {
+    fail "Failed to create pairing token"
+  }
+  PAT=$(echo "$PAT_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null) || {
+    fail "Failed to parse pairing token: $PAT_JSON"
+  }
+
+  echo "$PAT"
+}
+
+open_browser() {
+  local url="http://localhost:8787/?dev_token=${DEV_AUTH_SECRET}"
+  if command -v open &>/dev/null; then
+    open "$url"
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$url"
+  else
+    warn "Open in browser: $url"
   fi
 }
 
@@ -51,20 +120,68 @@ do_build_web() {
   ok "Web build complete (packages/web/dist)"
 }
 
+# ── Server-only start (foreground, no mock/browser) ──────────────────
+
 do_start() {
   kill_port 8787
   info "Starting wrangler dev on 0.0.0.0:8787…"
-  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0 --var ENVIRONMENT:development --var DEV_AUTH_SECRET:"${DEV_AUTH_SECRET:?Set DEV_AUTH_SECRET env var}"
+  exec npx wrangler dev --config wrangler.toml --ip 0.0.0.0 --var ENVIRONMENT:development --var DEV_AUTH_SECRET:"$DEV_AUTH_SECRET"
 }
 
+# ── Full dev environment (server + mock + browser) ───────────────────
+
+do_start_full() {
+  kill_port 8787
+  trap cleanup EXIT INT TERM
+
+  info "Starting wrangler dev on 0.0.0.0:8787…"
+  npx wrangler dev --config wrangler.toml --ip 0.0.0.0 \
+    --var ENVIRONMENT:development \
+    --var DEV_AUTH_SECRET:"$DEV_AUTH_SECRET" &
+  WRANGLER_PID=$!
+
+  wait_for_server
+  ok "Server ready on http://localhost:8787"
+
+  info "Starting Mock OpenClaw…"
+  local PAT
+  PAT=$(get_mock_token)
+  mkdir -p "$ROOT/.wrangler"
+  node "$ROOT/scripts/mock-openclaw.mjs" --token "$PAT" > "$ROOT/.wrangler/mock-openclaw.log" 2>&1 &
+  MOCK_PID=$!
+  ok "Mock OpenClaw connected (pid=$MOCK_PID)"
+
+  open_browser
+
+  echo ""
+  echo -e "${CYAN}╭──────────────────────────────────────────────────╮${NC}"
+  echo -e "${CYAN}│${NC}  ${GREEN}BotsChat Dev Environment Ready${NC}                  ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}                                                  ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Server:   http://localhost:8787                 ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Mock AI:  running ${DIM}(log: .wrangler/mock-openclaw.log)${NC}"
+  echo -e "${CYAN}│${NC}  Auth:     auto-login enabled                   ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}                                                  ${CYAN}│${NC}"
+  echo -e "${CYAN}│${NC}  Press ${YELLOW}Ctrl+C${NC} to stop all services              ${CYAN}│${NC}"
+  echo -e "${CYAN}╰──────────────────────────────────────────────────╯${NC}"
+  echo ""
+
+  wait $WRANGLER_PID 2>/dev/null || true
+}
+
+# ── Standalone mock (foreground) ─────────────────────────────────────
+
+do_mock() {
+  info "Getting auth token via dev-auth…"
+  local PAT
+  PAT=$(get_mock_token)
+  ok "Pairing token: ${PAT:0:16}***"
+  info "Starting Mock OpenClaw…"
+  exec node "$ROOT/scripts/mock-openclaw.mjs" --token "$PAT" "$@"
+}
+
+# ── Sync plugin to mini.local ────────────────────────────────────────
+
 do_sync_plugin() {
-  # ── IMPORTANT ──────────────────────────────────────────────────
-  # Development repo and production plugin MUST be kept separate:
-  #   Dev repo:    mini:~/Projects/botschat-app/botsChat/packages/plugin/
-  #   Production:  mini:~/.openclaw/extensions/botschat/
-  # NEVER edit files directly in ~/.openclaw/extensions/botschat/.
-  # Always: edit dev repo → build → deploy artifacts to extensions.
-  # ────────────────────────────────────────────────────────────────
   local REMOTE="mini.local"
   local DEV_DIR="~/Projects/botschat-app/botsChat/packages/plugin"
   local EXT_DIR="~/.openclaw/extensions/botschat"
@@ -105,6 +222,11 @@ case "$cmd" in
   reset)
     do_reset
     do_build_web
+    do_start_full
+    ;;
+  server)
+    do_build_web
+    do_migrate
     do_start
     ;;
   migrate)
@@ -119,10 +241,14 @@ case "$cmd" in
   logs)
     do_logs
     ;;
+  mock)
+    shift
+    do_mock "$@"
+    ;;
   *)
-    # Default: build + migrate + start
+    # Default: full dev experience — build + migrate + server + mock + browser
     do_build_web
     do_migrate
-    do_start
+    do_start_full
     ;;
 esac

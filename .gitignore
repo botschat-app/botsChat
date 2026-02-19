@@ -47,3 +47,6 @@ ios/DerivedData/
 
 # Apple Sign in with Apple private keys
 *.p8
+
+# Firebase service account keys
+*-firebase-adminsdk-*.json

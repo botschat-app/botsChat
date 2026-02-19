@@ -320,6 +320,14 @@ export const pairingApi = {
   delete: (id: string) => request<{ ok: boolean }>("DELETE", `/pairing-tokens/${id}`),
 };
 
+// ---- Push Notification Tokens ----
+export const pushApi = {
+  register: (token: string, platform: "web" | "ios" | "android") =>
+    request<{ ok: boolean; id: string }>("POST", "/push-tokens", { token, platform }),
+  unregister: (token: string) =>
+    request<{ ok: boolean }>("DELETE", "/push-tokens", { token }),
+};
+
 export const setupApi = {
   /** Get the recommended cloudUrl from the backend (smart resolution). */
   cloudUrl: () =>

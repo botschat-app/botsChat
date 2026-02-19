@@ -32,6 +32,8 @@ const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
 };
 
 let app: FirebaseApp | null = null;
@@ -40,6 +42,14 @@ let auth: Auth | null = null;
 /** Check if Firebase is configured (all required env vars present). */
 export function isFirebaseConfigured(): boolean {
   return !!(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId);
+}
+
+/** Ensure the Firebase app is initialized (for FCM, independent of OAuth). */
+export function ensureFirebaseApp(): FirebaseApp | null {
+  if (app) return app;
+  if (!isFirebaseConfigured()) return null;
+  app = initializeApp(firebaseConfig);
+  return app;
 }
 
 function getFirebaseAuth(): Auth {

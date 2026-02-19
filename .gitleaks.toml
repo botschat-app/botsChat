@@ -1,0 +1,28 @@
+# Gitleaks configuration for BotsChat
+# https://github.com/gitleaks/gitleaks
+
+title = "BotsChat Secret Scanning"
+
+[allowlist]
+description = "Known public client-side keys and build artifacts"
+paths = [
+  '''package-lock\.json''',
+  '''node_modules/''',
+  '''\.wrangler/''',
+  # Build output contains inlined client-side config — not secrets
+  '''dist/''',
+]
+regexTarget = "line"
+regexes = [
+  # Firebase client-side config (public by design — restricted by Firebase Security Rules and domain allowlists)
+  '''VITE_FIREBASE_API_KEY''',
+  '''VITE_FIREBASE_AUTH_DOMAIN''',
+  '''VITE_FIREBASE_PROJECT_ID''',
+  '''VITE_FIREBASE_MESSAGING_SENDER_ID''',
+  '''VITE_FIREBASE_APP_ID''',
+  '''VITE_FIREBASE_VAPID_KEY''',
+  # Google OAuth client IDs (public — not secrets)
+  '''VITE_GOOGLE_.*_CLIENT_ID''',
+  # Google Analytics measurement ID (public)
+  '''VITE_GA_MEASUREMENT_ID''',
+]

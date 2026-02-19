@@ -31,6 +31,9 @@ const config: CapacitorConfig = {
       resize: "none",
       resizeOnFullScreen: false,
     },
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "alert"],
+    },
   },
 
   ios: {

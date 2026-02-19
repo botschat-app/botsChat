@@ -1,5 +1,6 @@
 import type { Env } from "../env.js";
 import { verifyToken, getJwtSecret, signMediaUrl } from "../utils/auth.js";
+import { getFcmAccessToken, sendPushNotification } from "../utils/fcm.js";
 import { generateId as generateIdUtil } from "../utils/id.js";
 import { randomUUID } from "../utils/uuid.js";
 
@@ -26,6 +27,9 @@ export class ConnectionDO implements DurableObject {
 
   /** Pending resolve for a real-time task.scan.request → task.scan.result round-trip. */
   private pendingScanResolve: ((tasks: Array<Record<string, unknown>>) => void) | null = null;
+
+  /** Browser sessions that report themselves in foreground (push notifications are suppressed). */
+  private foregroundSessions = new Set<string>();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -115,7 +119,10 @@ export class ConnectionDO implements DurableObject {
         JSON.stringify({ type: "openclaw.disconnected" }),
       );
     }
-    // No explicit cleanup needed — the runtime manages the socket list
+    // Clean up foreground tracking for browser sessions
+    if (tag?.startsWith("browser:")) {
+      this.foregroundSessions.delete(tag);
+    }
   }
 
   /** Called when a WebSocket encounters an error. */
@@ -313,6 +320,17 @@ export class ConnectionDO implements DurableObject {
       console.log(`[DO] Forwarding agent.text to browsers: encrypted=${msg.encrypted}, messageId=${msg.messageId}, textLen=${typeof msg.text === "string" ? msg.text.length : "?"}`);
     }
     this.broadcastToBrowsers(JSON.stringify(msg));
+
+    // Send push notification if no browser session is in foreground
+    if (
+      (msg.type === "agent.text" || msg.type === "agent.media" || msg.type === "agent.a2ui") &&
+      this.foregroundSessions.size === 0 &&
+      this.env.FCM_SERVICE_ACCOUNT_JSON
+    ) {
+      this.sendPushNotifications(msg).catch((err) => {
+        console.error("[DO] Push notification failed:", err);
+      });
+    }
   }
 
   private async handleBrowserMessage(
@@ -367,6 +385,18 @@ export class ConnectionDO implements DurableObject {
 
     if (!attachment?.authenticated) {
       ws.send(JSON.stringify({ type: "auth.fail", reason: "Not authenticated" }));
+      return;
+    }
+
+    // Handle foreground/background state tracking for push notifications
+    if (msg.type === "foreground.enter") {
+      const tag = attachment.tag;
+      if (tag) this.foregroundSessions.add(tag);
+      return;
+    }
+    if (msg.type === "foreground.leave") {
+      const tag = attachment.tag;
+      if (tag) this.foregroundSessions.delete(tag);
       return;
     }
 
@@ -561,6 +591,65 @@ export class ConnectionDO implements DurableObject {
           }
         }
       }
+    }
+  }
+
+  // ---- Push notifications ----
+
+  /**
+   * Send push notifications to all of the user's registered devices.
+   * Called when an agent message arrives and no browser session is in foreground.
+   * Sends data-only FCM messages so clients can decrypt E2E content before showing.
+   */
+  private async sendPushNotifications(msg: Record<string, unknown>): Promise<void> {
+    const userId = await this.state.storage.get<string>("userId");
+    if (!userId) return;
+
+    const { results } = await this.env.DB.prepare(
+      "SELECT id, token, platform FROM push_tokens WHERE user_id = ?",
+    )
+      .bind(userId)
+      .all<{ id: string; token: string; platform: string }>();
+
+    if (!results || results.length === 0) return;
+
+    // Build data payload — includes ciphertext so the client can decrypt
+    const data: Record<string, string> = {
+      type: msg.type as string,
+      sessionKey: (msg.sessionKey as string) ?? "",
+      messageId: (msg.messageId as string) ?? "",
+      encrypted: msg.encrypted ? "1" : "0",
+    };
+
+    if (msg.type === "agent.text") {
+      data.text = (msg.text as string) ?? "";
+    } else if (msg.type === "agent.media") {
+      data.text = (msg.caption as string) || "";
+      data.mediaUrl = (msg.mediaUrl as string) ?? "";
+    } else if (msg.type === "agent.a2ui") {
+      data.text = "New interactive message";
+    }
+
+    const accessToken = await getFcmAccessToken(this.env.FCM_SERVICE_ACCOUNT_JSON!);
+    const projectId = this.env.FIREBASE_PROJECT_ID ?? "botschat-130ff";
+
+    const invalidTokenIds: string[] = [];
+    await Promise.allSettled(
+      results.map(async (row) => {
+        const ok = await sendPushNotification({
+          accessToken,
+          projectId,
+          fcmToken: row.token,
+          data,
+        });
+        if (!ok) invalidTokenIds.push(row.id);
+      }),
+    );
+
+    // Clean up invalid/expired tokens
+    for (const id of invalidTokenIds) {
+      await this.env.DB.prepare("DELETE FROM push_tokens WHERE id = ?").bind(id).run();
+      console.log(`[DO] Removed invalid push token: ${id}`);
     }
   }
 

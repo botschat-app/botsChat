@@ -13,6 +13,8 @@ import {
 import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
 import { BotsChatWSClient, type WSMessage } from "./ws";
+import { initPushNotifications } from "./push";
+import { setupForegroundDetection } from "./foreground";
 import { IconRail } from "./components/IconRail";
 import { Sidebar } from "./components/Sidebar";
 import { ChatWindow } from "./components/ChatWindow";
@@ -161,7 +163,6 @@ export default function App() {
             type: "SET_USER",
             user: { id: res.userId, email: devUser ? "auxtenwpc@gmail.com" : "dev@botschat.test", displayName: devUser ? "Auxten Wang" : "Dev User" },
           });
-          // Auto-setup E2E if dev_e2e password provided
           const devE2e = params.get("dev_e2e");
           if (devE2e) {
             try {
@@ -171,6 +172,9 @@ export default function App() {
             } catch (err) {
               dlog.warn("Auth", `Dev E2E key derivation failed: ${err}`);
             }
+          } else {
+            E2eService.clear();
+            setE2eReady(false);
           }
           // Remove dev params from URL
           params.delete("dev_token");
@@ -810,7 +814,14 @@ export default function App() {
     client.connect();
     wsClientRef.current = client;
 
+    // Initialize push notifications and foreground detection
+    initPushNotifications().catch((err) => {
+      dlog.warn("Push", `Push init failed: ${err}`);
+    });
+    const cleanupForeground = setupForegroundDetection(client);
+
     return () => {
+      cleanupForeground();
       client.disconnect();
       wsClientRef.current = null;
     };

@@ -12,4 +12,6 @@ export type Env = {
   PUBLIC_URL?: string;
   /** Secret for dev-token auth bypass (automated testing). Endpoint is 404 when unset. */
   DEV_AUTH_SECRET?: string;
+  /** FCM Service Account JSON for push notifications (stored as secret via `wrangler secret put`). */
+  FCM_SERVICE_ACCOUNT_JSON?: string;
 };
