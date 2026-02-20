@@ -5,6 +5,7 @@ import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
+import { formatMessageTime, formatFullDateTime } from "../utils/time";
 
 /** Simple string hash for action prompt keys (matches MessageContent / ChatWindow) */
 function simpleHash(str: string): string {
@@ -189,8 +190,12 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
                   <span className="text-h2" style={{ color: "var(--text-primary)" }}>
                     {parentMessage.sender === "user" ? "You" : "OpenClaw Agent"}
                   </span>
-                  <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
-                    {new Date(parentMessage.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  <span
+                    className="text-caption cursor-default"
+                    style={{ color: "var(--text-secondary)" }}
+                    title={formatFullDateTime(parentMessage.timestamp)}
+                  >
+                    {formatMessageTime(parentMessage.timestamp)}
                   </span>
                 </div>
                 <MessageContent
@@ -242,8 +247,12 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
                       <span className="text-h2" style={{ color: "var(--text-primary)" }}>
                         {msg.sender === "user" ? "You" : "OpenClaw Agent"}
                       </span>
-                      <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
-                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <span
+                        className="text-caption cursor-default"
+                        style={{ color: "var(--text-secondary)" }}
+                        title={formatFullDateTime(msg.timestamp)}
+                      >
+                        {formatMessageTime(msg.timestamp)}
                       </span>
                     </div>
                   )}

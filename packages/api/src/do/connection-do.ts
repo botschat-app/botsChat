@@ -32,6 +32,9 @@ export class ConnectionDO implements DurableObject {
   /** Browser sessions that report themselves in foreground (push notifications are suppressed). */
   private foregroundSessions = new Set<string>();
 
+  /** Timestamp of last accepted OpenClaw WebSocket (in-memory, no storage write). */
+  private lastOpenClawAcceptedAt = 0;
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -39,16 +42,33 @@ export class ConnectionDO implements DurableObject {
 
   /** Handle incoming HTTP requests (WebSocket upgrades). */
   async fetch(request: Request): Promise<Response> {
+    try {
+      return await this._fetch(request);
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("Exceeded")) {
+        console.error("[DO] Storage limit exceeded:", msg);
+        return new Response("Storage limit exceeded, retry later", {
+          status: 503,
+          headers: { "Retry-After": "300" },
+        });
+      }
+      throw err;
+    }
+  }
+
+  private async _fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     // Route: /gateway/:accountId — OpenClaw plugin connects here
     if (url.pathname.startsWith("/gateway/")) {
-      // Extract and store userId from the gateway path
       const userId = url.pathname.split("/gateway/")[1]?.split("?")[0];
       if (userId) {
-        await this.state.storage.put("userId", userId);
+        const stored = await this.state.storage.get<string>("userId");
+        if (stored !== userId) {
+          await this.state.storage.put("userId", userId);
+        }
       }
-      // Check if the API worker already verified the token against D1
       const preVerified = url.searchParams.get("verified") === "1";
       return this.handleOpenClawConnect(request, preVerified);
     }
@@ -92,22 +112,32 @@ export class ConnectionDO implements DurableObject {
 
   /** Called when a WebSocket receives a message (wakes from hibernation). */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const tag = this.getTag(ws);
-    const data = typeof message === "string" ? message : new TextDecoder().decode(message);
-
-    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(data);
-    } catch {
-      return; // Ignore malformed JSON
-    }
+      const tag = this.getTag(ws);
+      const data = typeof message === "string" ? message : new TextDecoder().decode(message);
 
-    if (tag === "openclaw") {
-      // Message from OpenClaw → handle auth or forward to browsers
-      await this.handleOpenClawMessage(ws, parsed);
-    } else if (tag?.startsWith("browser:")) {
-      // Message from browser → forward to OpenClaw
-      await this.handleBrowserMessage(ws, parsed);
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        return;
+      }
+
+      if (tag === "openclaw") {
+        await this.handleOpenClawMessage(ws, parsed);
+      } else if (tag?.startsWith("browser:")) {
+        await this.handleBrowserMessage(ws, parsed);
+      }
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("Exceeded")) {
+        console.error("[DO] Storage limit exceeded in webSocketMessage:", msg);
+        try {
+          ws.send(JSON.stringify({ type: "error", message: "Storage limit exceeded, retry later" }));
+        } catch { /* socket may already be dead */ }
+        return;
+      }
+      throw err;
     }
   }
 
@@ -139,10 +169,31 @@ export class ConnectionDO implements DurableObject {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
+    const now = Date.now();
+    const cooldownMs = 30_000;
+    if (now - this.lastOpenClawAcceptedAt < cooldownMs) {
+      const retryAfter = Math.ceil((cooldownMs - (now - this.lastOpenClawAcceptedAt)) / 1000);
+      return new Response("Too many connections, retry later", {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter) },
+      });
+    }
+    this.lastOpenClawAcceptedAt = now;
+
+    // Safety valve: if stale openclaw sockets accumulated (e.g. from
+    // rapid reconnects that authenticated but then lost their edge
+    // connection), close them all before accepting a new one.
+    const existing = this.state.getWebSockets("openclaw");
+    if (existing.length > 3) {
+      console.warn(`[DO] Safety valve: ${existing.length} openclaw sockets, closing all`);
+      for (const s of existing) {
+        try { s.close(4009, "replaced"); } catch { /* dead */ }
+      }
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
-    // Accept with Hibernation API, tag as "openclaw"
     this.state.acceptWebSocket(server, ["openclaw"]);
 
     // If the API worker already verified the token against D1, mark as
@@ -187,31 +238,26 @@ export class ConnectionDO implements DurableObject {
       const isValid = attachment?.preVerified || await this.validatePairingToken(token);
 
       if (isValid) {
-        // Close any existing (potentially stale) openclaw sockets before
-        // marking the new one as authenticated.  Cloudflare's edge infra
-        // terminates WebSocket connections every ~60 min (code 1006).  The
-        // plugin reconnects immediately, but the DO may not have detected
-        // the old socket's death yet (no close frame → no webSocketClose
-        // callback yet).  Without this cleanup, getOpenClawSocket() could
-        // return a stale/dead socket, silently dropping all messages.
+        // Close ALL other openclaw sockets. Use custom code 4009 so
+        // well-behaved plugins know they were replaced (not a crash)
+        // and should NOT reconnect. The Worker-level rate limit (10s)
+        // prevents the resulting close event from flooding the DO.
         const existingSockets = this.state.getWebSockets("openclaw");
+        let closedCount = 0;
         for (const oldWs of existingSockets) {
           if (oldWs !== ws) {
             try {
-              oldWs.close(1000, "replaced by new connection");
-            } catch {
-              // Socket may already be dead — ignore
-            }
+              oldWs.close(4009, "replaced");
+              closedCount++;
+            } catch { /* already dead */ }
           }
         }
 
         ws.serializeAttachment({ ...attachment, authenticated: true });
-        // Include userId so the plugin can derive the E2E key
         const userId = await this.state.storage.get<string>("userId");
-        console.log(`[DO] auth.ok → userId=${userId}, closedStale=${existingSockets.length - 1}`);
+        console.log(`[DO] auth.ok → userId=${userId}, closed=${closedCount}, total=${existingSockets.length}`);
         ws.send(JSON.stringify({ type: "auth.ok", userId }));
-        // Store gateway default model from plugin auth
-        if (msg.model) {
+        if (msg.model && msg.model !== this.defaultModel) {
           this.defaultModel = msg.model as string;
           await this.state.storage.put("defaultModel", this.defaultModel);
         }
@@ -295,20 +341,24 @@ export class ConnectionDO implements DurableObject {
       await this.handleTaskScanResult(msg);
     }
 
-    // Handle models list from plugin — persist to storage and broadcast to browsers
     if (msg.type === "models.list") {
-      this.cachedModels = (msg.models as Array<{ id: string; name: string; provider: string }>) ?? [];
-      await this.state.storage.put("cachedModels", this.cachedModels);
-      console.log(`[DO] Persisted ${this.cachedModels.length} models to storage, broadcasting connection.status`);
+      const newModels = (msg.models as Array<{ id: string; name: string; provider: string }>) ?? [];
+      const changed = JSON.stringify(newModels) !== JSON.stringify(this.cachedModels);
+      this.cachedModels = newModels;
+      if (changed) {
+        await this.state.storage.put("cachedModels", this.cachedModels);
+        console.log(`[DO] Persisted ${this.cachedModels.length} models to storage`);
+      }
       this.broadcastToBrowsers(
         JSON.stringify({ type: "connection.status", openclawConnected: true, defaultModel: this.defaultModel, models: this.cachedModels }),
       );
     }
 
-    // Plugin applied BotsChat default model to OpenClaw config — update and broadcast
     if (msg.type === "defaultModel.updated" && typeof msg.model === "string") {
-      this.defaultModel = msg.model;
-      await this.state.storage.put("defaultModel", this.defaultModel);
+      if (msg.model !== this.defaultModel) {
+        this.defaultModel = msg.model;
+        await this.state.storage.put("defaultModel", this.defaultModel);
+      }
       this.broadcastToBrowsers(
         JSON.stringify({ type: "connection.status", openclawConnected: true, defaultModel: this.defaultModel, models: this.cachedModels }),
       );
@@ -1299,7 +1349,11 @@ export class ConnectionDO implements DurableObject {
         .first<{ user_id: string }>();
 
       const isValid = !!row;
-      await this.state.storage.put(cacheKey, { valid: isValid, cachedAt: Date.now() });
+      try {
+        await this.state.storage.put(cacheKey, { valid: isValid, cachedAt: Date.now() });
+      } catch {
+        // Non-critical — skip caching if storage is full
+      }
       return isValid;
     } catch (err) {
       console.error("[DO] Failed to validate pairing token against D1:", err);

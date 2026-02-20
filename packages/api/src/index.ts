@@ -365,7 +365,6 @@ async function verifyUserAccess(c: { req: { header: (n: string) => string | unde
 app.all("/api/gateway/:connId", async (c) => {
   let userId = c.req.param("connId");
 
-  // If connId is not a real user ID (e.g. "default"), resolve via token
   if (!userId.startsWith("u_")) {
     const token =
       c.req.query("token") ??
@@ -376,7 +375,6 @@ app.all("/api/gateway/:connId", async (c) => {
       return c.json({ error: "Token required for gateway connection" }, 401);
     }
 
-    // Look up user by pairing token (exclude revoked tokens)
     const row = await c.env.DB.prepare(
       "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
     )
@@ -387,26 +385,57 @@ app.all("/api/gateway/:connId", async (c) => {
       return c.json({ error: "Invalid pairing token" }, 401);
     }
     userId = row.user_id;
+  }
 
-    // Update audit fields: last_connected_at, last_ip, connection_count
+  // --- Worker-level rate limit (Cache API) ---
+  // Protects the DO from being woken up during reconnection storms.
+  // The Cache API persists across Worker isolates within the same colo.
+  const GATEWAY_COOLDOWN_S = 10;
+  const cache = caches.default;
+  const rateCacheUrl = `https://rate.internal/gateway/${userId}`;
+  const rateCacheReq = new Request(rateCacheUrl);
+  const rateCached = await cache.match(rateCacheReq);
+  if (rateCached) {
+    return c.text("Too many connections, retry later", 429, {
+      "Retry-After": String(GATEWAY_COOLDOWN_S),
+    });
+  }
+
+  // Audit: update pairing token stats (only when not rate-limited)
+  const token = c.req.query("token") ?? c.req.header("X-Pairing-Token");
+  if (token) {
     const clientIp = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
-    await c.env.DB.prepare(
-      `UPDATE pairing_tokens
-       SET last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1
-       WHERE token = ?`,
-    )
-      .bind(clientIp, token)
-      .run();
+    c.executionCtx.waitUntil(
+      c.env.DB.prepare(
+        `UPDATE pairing_tokens
+         SET last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1
+         WHERE token = ?`,
+      ).bind(clientIp, token).run(),
+    );
   }
 
   const doId = c.env.CONNECTION_DO.idFromName(userId);
   const stub = c.env.CONNECTION_DO.get(doId);
   const url = new URL(c.req.url);
-  // Pass verified userId to DO — the API worker already validated the token
-  // against D1 above, so DO can trust this.
   url.pathname = `/gateway/${userId}`;
   url.searchParams.set("verified", "1");
-  return stub.fetch(new Request(url.toString(), c.req.raw));
+  const doResp = await stub.fetch(new Request(url.toString(), c.req.raw));
+
+  // Cache the rate limit after the DO responds (success or rate-limited).
+  // 101 = WebSocket accepted; 429 = DO's own rate limit.
+  // Either way, prevent further DO wake-ups for GATEWAY_COOLDOWN_S.
+  if (doResp.status === 101 || doResp.status === 429) {
+    c.executionCtx.waitUntil(
+      cache.put(
+        rateCacheReq,
+        new Response(null, {
+          headers: { "Cache-Control": `public, max-age=${GATEWAY_COOLDOWN_S}` },
+        }),
+      ),
+    );
+  }
+
+  return doResp;
 });
 
 // Browser client connects to: /api/ws/:userId/:sessionId

@@ -8,6 +8,7 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
 import { E2eService } from "../e2e";
+import { formatMessageTime, formatFullDateTime } from "../utils/time";
 
 type ChatWindowProps = {
   sendMessage: (msg: WSMessage) => void;
@@ -988,8 +989,12 @@ function MessageRow({
               <span className="text-h2" style={{ color: "var(--text-primary)" }}>
                 {senderLabel}
               </span>
-              <span className="text-caption" style={{ color: "var(--text-secondary)" }}>
-                {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              <span
+                className="text-caption cursor-default"
+                style={{ color: "var(--text-secondary)" }}
+                title={formatFullDateTime(msg.timestamp)}
+              >
+                {formatMessageTime(msg.timestamp)}
               </span>
             </div>
           )}

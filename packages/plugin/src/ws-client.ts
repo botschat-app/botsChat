@@ -21,6 +21,8 @@ export type BotsChatCloudClientOptions = {
 
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
+/** Custom close code: server replaced this connection with a newer one. */
+const CLOSE_REPLACED = 4009;
 
 /**
  * Manages a persistent outbound WebSocket connection from the OpenClaw
@@ -36,6 +38,7 @@ export class BotsChatCloudClient {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private backoffResetTimer: ReturnType<typeof setTimeout> | null = null;
   private backoffMs = MIN_BACKOFF_MS;
   private intentionalClose = false;
   private _connected = false;
@@ -95,14 +98,37 @@ export class BotsChatCloudClient {
       );
       this.setConnected(false);
       this.stopPing();
+      if (this.backoffResetTimer) {
+        clearTimeout(this.backoffResetTimer);
+        this.backoffResetTimer = null;
+      }
+      if (code === CLOSE_REPLACED) {
+        this.log("info", "Connection replaced by server — not reconnecting");
+        this.intentionalClose = true;
+      }
       if (!this.intentionalClose) {
         this.scheduleReconnect();
       }
     });
 
+    // Detect HTTP-level rejections before the WebSocket is established.
+    // Node ws emits 'unexpected-response' when the server returns non-101.
+    this.ws.on("unexpected-response" as any, (_req: any, res: any) => {
+      const status = res?.statusCode ?? 0;
+      const retryAfter = parseInt(res?.headers?.["retry-after"] ?? "0", 10);
+      if (status === 429 && retryAfter > 0) {
+        this.log("warn", `Rate-limited (429), backing off ${retryAfter}s`);
+        this.backoffMs = retryAfter * 1000;
+      } else if (status === 503) {
+        const secs = retryAfter || 300;
+        this.log("warn", `Service unavailable (503), backing off ${secs}s`);
+        this.backoffMs = secs * 1000;
+      }
+      // ws will emit 'close' after this, triggering scheduleReconnect
+    });
+
     this.ws.on("error", (err) => {
       this.log("error", `WebSocket error: ${err.message}`);
-      // The "close" event will fire after this, triggering reconnect
     });
   }
 
@@ -123,6 +149,10 @@ export class BotsChatCloudClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.backoffResetTimer) {
+      clearTimeout(this.backoffResetTimer);
+      this.backoffResetTimer = null;
+    }
     if (this.ws) {
       this.ws.close(1000, "shutdown");
       this.ws = null;
@@ -136,9 +166,15 @@ export class BotsChatCloudClient {
     switch (msg.type) {
       case "auth.ok":
         this.log("info", `Authenticated with BotsChat cloud (userId=${msg.userId}, hasE2ePwd=${!!this.opts.e2ePassword})`);
-        // Mark connected FIRST so that subsequent messages (task.scan.request,
-        // models.request) arriving while deriveKey is running can be processed.
-        this.backoffMs = MIN_BACKOFF_MS;
+        // Delay backoff reset: only reset to MIN after the connection has
+        // been stable for 10s. If the connection drops immediately (e.g.
+        // server-side replacement), we keep the current backoff to avoid
+        // a fast reconnect loop.
+        if (this.backoffResetTimer) clearTimeout(this.backoffResetTimer);
+        this.backoffResetTimer = setTimeout(() => {
+          this.backoffMs = MIN_BACKOFF_MS;
+          this.backoffResetTimer = null;
+        }, 10_000);
         this.setConnected(true);
         this.startPing();
         // Derive E2E key AFTER marking connected (PBKDF2 is slow ~1-2s).
