@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState, useMemo, useCallback } from "react"
 import { useAppState, useAppDispatch, type ChatMessage } from "../store";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
-import { ModelSelect } from "./ModelSelect";
 import { SessionTabs } from "./SessionTabs";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { dlog } from "../debug-log";
@@ -165,10 +164,14 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   const [imageUploading, setImageUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [quotedMessage, setQuotedMessage] = useState<ChatMessage | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const modelRef = useRef<HTMLDivElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const [tabBarWidth, setTabBarWidth] = useState(0);
 
   const sessionKey = state.selectedSessionKey;
 
@@ -202,6 +205,32 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     }
   }, [sessionKey, isMobile]);
 
+  // Close model dropdown on outside click
+  useEffect(() => {
+    if (!modelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (modelRef.current && !modelRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [modelOpen]);
+
+  // Measure tab bar width for adaptive model display
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setTabBarWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    setTabBarWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+
   // Restore per-session model from localStorage when session changes
   useEffect(() => {
     if (!sessionKey) return;
@@ -218,6 +247,15 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   }, [sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentModel = state.sessionModel ?? state.defaultModel;
+
+  const modelDisplayText = useMemo(() => {
+    if (!currentModel) return null;
+    if (tabBarWidth >= 500) {
+      const slash = currentModel.lastIndexOf("/");
+      return slash >= 0 ? currentModel.substring(slash + 1) : currentModel;
+    }
+    return null;
+  }, [currentModel, tabBarWidth]);
 
   const handleModelChange = useCallback((modelId: string) => {
     if (!modelId || !sessionKey || modelId === currentModel) return;
@@ -563,8 +601,6 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
     });
   }, [sessionKey, state.streamingRunId, state.streamingThreadId, state.user?.id, sendMessage, dispatch]);
 
-  const isStreaming = !!state.streamingRunId && !state.streamingThreadId;
-
   const selectedAgent = state.agents.find((a) => a.id === state.selectedAgentId);
   const channelName = selectedAgent?.name ?? "channel";
   const channelId = selectedAgent?.channelId ?? null;
@@ -619,56 +655,97 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
       {/* Channel header — hidden on mobile (MobileLayout already shows channel name) */}
       {!isMobile && (
         <div
-          className="flex items-center justify-between px-3 sm:px-5 gap-2 flex-shrink-0"
+          className="flex items-center px-3 sm:px-5 gap-2 flex-shrink-0"
           style={{
             height: 44,
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-h1 truncate" style={{ color: "var(--text-primary)" }}>
-              # {channelName}
+          <span className="text-h1 truncate" style={{ color: "var(--text-primary)" }}>
+            # {channelName}
+          </span>
+          {selectedAgent && !selectedAgent.isDefault && (
+            <span className="text-caption hidden sm:inline flex-shrink-0" style={{ color: "var(--text-secondary)" }}>
+              — custom channel
             </span>
-            {selectedAgent && !selectedAgent.isDefault && (
-              <span className="text-caption hidden sm:inline flex-shrink-0" style={{ color: "var(--text-secondary)" }}>
-                — custom channel
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <svg className="w-3.5 h-3.5 hidden sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
-            </svg>
-            <ModelSelect
-              value={currentModel ?? ""}
-              onChange={handleModelChange}
-              models={state.models}
-              disabled={!state.openclawConnected}
-              placeholder="No model"
-              compact
-            />
-          </div>
+          )}
         </div>
       )}
 
-      {/* Session tabs + model selector (mobile: inline with tabs) */}
+      {/* Session tabs + adaptive model selector (all screen sizes) */}
       {showSessionTabs && (
-        <div className="flex items-center flex-shrink-0">
+        <div ref={tabBarRef} className="flex items-stretch flex-shrink-0">
           <div className="flex-1 min-w-0">
             <SessionTabs channelId={channelId} />
           </div>
-          {isMobile && (
-            <div className="flex-shrink-0 pr-2" style={{ borderBottom: "1px solid var(--border)" }}>
-              <ModelSelect
-                value={currentModel ?? ""}
-                onChange={handleModelChange}
-                models={state.models}
-                disabled={!state.openclawConnected}
-                placeholder="No model"
-                compact
-              />
-            </div>
-          )}
+          <div
+            ref={modelRef}
+            className="relative flex-shrink-0 flex items-center pr-2"
+            style={{ borderBottom: "1px solid var(--border)" }}
+          >
+            <button
+              onClick={() => setModelOpen((v) => !v)}
+              disabled={!state.openclawConnected}
+              className="flex items-center gap-1.5 px-2 h-8 rounded-md transition-colors text-caption"
+              style={{
+                color: currentModel ? "var(--text-primary)" : "var(--text-muted)",
+                opacity: !state.openclawConnected ? 0.5 : 1,
+                cursor: !state.openclawConnected ? "not-allowed" : "pointer",
+                fontFamily: "var(--font-mono)",
+              }}
+              title={currentModel || "Select model"}
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+              </svg>
+              {modelDisplayText && (
+                <span
+                  className="block overflow-hidden whitespace-nowrap max-w-[200px]"
+                  style={{ direction: "rtl", textOverflow: "ellipsis" }}
+                >{modelDisplayText}</span>
+              )}
+            </button>
+            {modelOpen && (
+              <div
+                className="absolute right-0 top-full mt-1 z-50 rounded-md shadow-lg py-1 min-w-[220px] max-h-[300px] overflow-y-auto"
+                style={{
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border)",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                }}
+              >
+                {state.models.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      handleModelChange(m.id);
+                      setModelOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-caption transition-colors"
+                    style={{
+                      color: m.id === currentModel ? "var(--text-primary)" : "var(--text-secondary)",
+                      background: m.id === currentModel ? "var(--bg-hover)" : "transparent",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = m.id === currentModel ? "var(--bg-hover)" : "transparent";
+                    }}
+                  >
+                    {m.id === currentModel && (
+                      <span className="mr-1.5" style={{ color: "var(--accent)" }}>&#10003;</span>
+                    )}
+                    {m.id}
+                  </button>
+                ))}
+                {state.models.length === 0 && (
+                  <div className="px-3 py-2 text-caption" style={{ color: "var(--text-muted)" }}>
+                    No models available
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -865,38 +942,20 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
               </button>
             </div>
 
-            {/* Send / Stop button */}
-            {isStreaming ? (
-              <button
-                onClick={handleStop}
-                className="px-3 py-1.5 rounded-sm text-caption font-bold text-white transition-colors"
-                style={{ background: "#e74c3c" }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "#c0392b"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "#e74c3c"; }}
-                title="Stop generating"
-              >
-                <div className="flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                  </svg>
-                  Stop
-                </div>
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() && !pendingImage}
-                className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                style={{ background: "var(--bg-active)" }}
-              >
-                <div className="flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                  </svg>
-                  Send
-                </div>
-              </button>
-            )}
+            {/* Send button */}
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() && !pendingImage}
+              className="px-3 py-1.5 rounded-sm text-caption font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              style={{ background: "var(--bg-active)" }}
+            >
+              <div className="flex items-center gap-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                </svg>
+                Send
+              </div>
+            </button>
           </div>
         </div>
       </div>

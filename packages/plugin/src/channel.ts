@@ -240,6 +240,14 @@ export const botschatPlugin = {
         return;
       }
 
+      const existingClient = cloudClients.get(accountId);
+      if (existingClient) {
+        log?.info(`[${accountId}] Disconnecting previous client before reconnect`);
+        existingClient.disconnect();
+        cloudClients.delete(accountId);
+        cloudUrls.delete(accountId);
+      }
+
       ctx.setStatus({
         ...ctx.getStatus(),
         accountId,
@@ -933,6 +941,8 @@ async function openclawCronAdd(
   const s = (msg.schedule || "").trim();
   if (/^at\s+/i.test(s)) {
     args.push("--at", s.replace(/^at\s+/i, ""));
+  } else if (/^cron\s+/i.test(s)) {
+    args.push("--cron", s.replace(/^cron\s+/i, ""));
   } else if (s) {
     args.push("--every", s.replace(/^every\s+/i, ""));
   }
@@ -1007,6 +1017,8 @@ async function handleTaskSchedule(
         const s = msg.schedule.trim();
         if (/^at\s+/i.test(s)) {
           args.push("--at", s.replace(/^at\s+/i, ""));
+        } else if (/^cron\s+/i.test(s)) {
+          args.push("--cron", s.replace(/^cron\s+/i, ""));
         } else {
           args.push("--every", s.replace(/^every\s+/i, ""));
         }
@@ -1638,6 +1650,8 @@ async function handleTaskScanRequest(
               else scheduleStr = `every ${ms / 1000}s`;
             } else if (job.schedule.kind === "at" && job.schedule.at) {
               scheduleStr = `at ${job.schedule.at}`;
+            } else if (job.schedule.kind === "cron" && (job.schedule as any).expr) {
+              scheduleStr = `cron ${(job.schedule as any).expr}`;
             }
           }
 

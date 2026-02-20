@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from "react";
 //   "at 09:00", "at 14:30"
 // ---------------------------------------------------------------------------
 
-type ScheduleKind = "every" | "at";
+type ScheduleKind = "every" | "at" | "cron";
 type IntervalUnit = "s" | "m" | "h";
 
 interface ParsedSchedule {
@@ -20,6 +20,8 @@ interface ParsedSchedule {
   intervalUnit?: IntervalUnit;
   // "at" fields
   atTime?: string; // HH:MM
+  // "cron" fields
+  cronExpr?: string; // e.g. "0 8 * * *"
 }
 
 /** Parse a human-readable schedule string into structured parts */
@@ -46,6 +48,15 @@ function parseSchedule(raw: string): ParsedSchedule | null {
     };
   }
 
+  // Match "cron <5-field expression>"
+  const cronMatch = raw.trim().match(/^cron\s+(.+)$/i);
+  if (cronMatch) {
+    return {
+      kind: "cron",
+      cronExpr: cronMatch[1].trim(),
+    };
+  }
+
   return null;
 }
 
@@ -57,7 +68,40 @@ function buildSchedule(parsed: ParsedSchedule): string {
   if (parsed.kind === "at" && parsed.atTime) {
     return `at ${parsed.atTime}`;
   }
+  if (parsed.kind === "cron" && parsed.cronExpr) {
+    return `cron ${parsed.cronExpr}`;
+  }
   return "";
+}
+
+/** Convert a 5-field cron expression to a human-readable description */
+function describeCron(expr: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length < 5) return expr;
+
+  const [min, hour, dom, mon, dow] = parts;
+
+  // "0 9 * * *" → "Daily at 09:00"
+  if (dom === "*" && mon === "*" && dow === "*" && !min.includes(",") && !hour.includes(",")) {
+    const h = hour.padStart(2, "0");
+    const m = min.padStart(2, "0");
+    return `Daily at ${h}:${m}`;
+  }
+
+  // "0 9,18 * * *" → "Daily at 09:00, 18:00"
+  if (dom === "*" && mon === "*" && dow === "*" && hour.includes(",")) {
+    const times = hour.split(",").map((h) => `${h.padStart(2, "0")}:${min.padStart(2, "0")}`);
+    return `Daily at ${times.join(", ")}`;
+  }
+
+  // "0 9 * * 1" → "Mon at 09:00"
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  if (dom === "*" && mon === "*" && /^\d$/.test(dow)) {
+    const dayName = dayNames[parseInt(dow)] ?? dow;
+    return `${dayName} at ${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+  }
+
+  return expr;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +129,7 @@ export function ScheduleEditor({
   const [intervalValue, setIntervalValue] = useState<number>(parsed?.intervalValue ?? 1);
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>(parsed?.intervalUnit ?? "h");
   const [atTime, setAtTime] = useState<string>(parsed?.atTime ?? "09:00");
+  const [cronExpr, setCronExpr] = useState<string>(parsed?.cronExpr ?? "0 9 * * *");
 
   // Re-sync when external value changes
   useEffect(() => {
@@ -94,18 +139,22 @@ export function ScheduleEditor({
       if (p.kind === "every") {
         setIntervalValue(p.intervalValue ?? 1);
         setIntervalUnit(p.intervalUnit ?? "h");
-      } else {
+      } else if (p.kind === "at") {
         setAtTime(p.atTime ?? "09:00");
+      } else if (p.kind === "cron") {
+        setCronExpr(p.cronExpr ?? "0 9 * * *");
       }
     }
   }, [value]);
 
   // Emit the schedule string whenever fields change
   const emitChange = useCallback(
-    (k: ScheduleKind, iv: number, iu: IntervalUnit, at: string) => {
+    (k: ScheduleKind, iv: number, iu: IntervalUnit, at: string, cron: string) => {
       const schedule = buildSchedule(
         k === "every"
           ? { kind: "every", intervalValue: iv, intervalUnit: iu }
+          : k === "cron"
+          ? { kind: "cron", cronExpr: cron }
           : { kind: "at", atTime: at },
       );
       onChange(schedule);
@@ -115,23 +164,28 @@ export function ScheduleEditor({
 
   const handleKindChange = (k: ScheduleKind) => {
     setKind(k);
-    emitChange(k, intervalValue, intervalUnit, atTime);
+    emitChange(k, intervalValue, intervalUnit, atTime, cronExpr);
   };
 
   const handleIntervalValueChange = (v: number) => {
     const clamped = Math.max(1, Math.min(v, 999));
     setIntervalValue(clamped);
-    emitChange(kind, clamped, intervalUnit, atTime);
+    emitChange(kind, clamped, intervalUnit, atTime, cronExpr);
   };
 
   const handleIntervalUnitChange = (u: IntervalUnit) => {
     setIntervalUnit(u);
-    emitChange(kind, intervalValue, u, atTime);
+    emitChange(kind, intervalValue, u, atTime, cronExpr);
   };
 
   const handleAtTimeChange = (t: string) => {
     setAtTime(t);
-    emitChange(kind, intervalValue, intervalUnit, t);
+    emitChange(kind, intervalValue, intervalUnit, t, cronExpr);
+  };
+
+  const handleCronExprChange = (expr: string) => {
+    setCronExpr(expr);
+    emitChange(kind, intervalValue, intervalUnit, atTime, expr);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -163,6 +217,16 @@ export function ScheduleEditor({
           icon={
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
+        <KindTab
+          active={kind === "cron"}
+          onClick={() => handleKindChange("cron")}
+          label="Cron"
+          icon={
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
             </svg>
           }
         />
@@ -206,6 +270,22 @@ export function ScheduleEditor({
                 label="sec"
               />
             </div>
+          </>
+        ) : kind === "cron" ? (
+          <>
+            <input
+              type="text"
+              value={cronExpr}
+              onChange={(e) => handleCronExprChange(e.target.value)}
+              placeholder="0 9 * * *"
+              className="text-body font-mono px-2 py-1 rounded-sm focus:outline-none flex-1 min-w-[140px]"
+              style={{
+                background: "var(--bg-hover)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--bg-active)",
+              }}
+              autoFocus
+            />
           </>
         ) : (
           <>
@@ -251,6 +331,8 @@ export function ScheduleEditor({
       <div className="text-tiny" style={{ color: "var(--text-muted)" }}>
         {kind === "every"
           ? `Runs every ${intervalValue} ${intervalUnit === "h" ? "hour" : intervalUnit === "m" ? "minute" : "second"}${intervalValue !== 1 ? "s" : ""}`
+          : kind === "cron"
+          ? `Runs: ${describeCron(cronExpr)}`
           : `Runs daily at ${atTime}`}
       </div>
     </div>
@@ -297,52 +379,43 @@ export function ScheduleDisplay({
     );
   }
 
+  const iconByKind: Record<ScheduleKind, React.ReactNode> = {
+    every: (
+      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+      </svg>
+    ),
+    at: (
+      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+    cron: (
+      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--text-muted)" }}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+      </svg>
+    ),
+  };
+
+  const labelByKind: Record<ScheduleKind, string> = {
+    every: `Every ${parsed.intervalValue}${parsed.intervalUnit === "h" ? "h" : parsed.intervalUnit === "m" ? "m" : "s"}`,
+    at: `Daily at ${parsed.atTime}`,
+    cron: describeCron(parsed.cronExpr ?? ""),
+  };
+
   return (
     <button
       className="flex items-center gap-1.5 cursor-pointer group"
       onClick={onClick}
       title="Click to edit schedule"
     >
-      {parsed.kind === "every" ? (
-        <>
-          <svg
-            className="w-3.5 h-3.5 flex-shrink-0"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            style={{ color: "var(--text-muted)" }}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
-          </svg>
-          <span
-            className="text-body group-hover:underline"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Every {parsed.intervalValue}
-            {parsed.intervalUnit === "h" ? "h" : parsed.intervalUnit === "m" ? "m" : "s"}
-          </span>
-        </>
-      ) : (
-        <>
-          <svg
-            className="w-3.5 h-3.5 flex-shrink-0"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            style={{ color: "var(--text-muted)" }}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span
-            className="text-body group-hover:underline"
-            style={{ color: "var(--text-primary)" }}
-          >
-            Daily at {parsed.atTime}
-          </span>
-        </>
-      )}
+      {iconByKind[parsed.kind]}
+      <span
+        className="text-body group-hover:underline"
+        style={{ color: "var(--text-primary)" }}
+      >
+        {labelByKind[parsed.kind]}
+      </span>
     </button>
   );
 }
