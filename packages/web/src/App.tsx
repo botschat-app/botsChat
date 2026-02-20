@@ -886,6 +886,8 @@ export default function App() {
 
     const sessionId = randomUUID();
     dlog.info("WS", `Connecting WebSocket (session=${sessionId.slice(0, 8)}...)`);
+    let fgResend: (() => void) | null = null;
+
     const client = new BotsChatWSClient({
       userId: state.user.id,
       sessionId,
@@ -896,6 +898,10 @@ export default function App() {
       onStatusChange: (connected) => {
         dlog.info("WS", connected ? "WebSocket connected" : "WebSocket disconnected");
         dispatch({ type: "SET_WS_CONNECTED", connected });
+        // After auth succeeds, re-send foreground state so the DO knows about us.
+        // The initial send in setupForegroundDetection fires before the socket
+        // is open, so this is the first one that actually reaches the server.
+        if (connected) fgResend?.();
       },
     });
 
@@ -911,14 +917,15 @@ export default function App() {
       .catch((err) => {
         dlog.warn("Push", `Push init failed: ${err}`);
       });
-    const cleanupForeground = setupForegroundDetection({
+    const fg = setupForegroundDetection({
       wsClient: client,
       getActiveSessionKey: () => stateRef.current.selectedSessionKey,
       onResume: () => setForegroundResumeCount((c) => c + 1),
     });
+    fgResend = fg.resend;
 
     return () => {
-      cleanupForeground();
+      fg.cleanup();
       client.disconnect();
       wsClientRef.current = null;
     };

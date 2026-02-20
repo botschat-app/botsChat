@@ -3,6 +3,7 @@ import { useAppState, useAppDispatch, type ChatMessage } from "../store";
 import { messagesApi } from "../api";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
+import { E2eService } from "../e2e";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
 import { formatMessageTime, formatFullDateTime } from "../utils/time";
@@ -33,10 +34,24 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
     dlog.info("Thread", `Loading history for thread ${state.activeThreadId}`);
     messagesApi
       .list(state.user.id, threadSessionKey, state.activeThreadId)
-      .then(({ messages }) => {
+      .then(async ({ messages }) => {
         dlog.info("Thread", `Loaded ${messages.length} thread messages`);
         if (messages.length > 0) {
-          dispatch({ type: "OPEN_THREAD", threadId: state.activeThreadId!, messages });
+          const decrypted = await Promise.all(messages.map(async (m) => {
+            if (m.encrypted && E2eService.hasKey()) {
+              try {
+                const plaintext = await E2eService.decrypt(m.text, m.id);
+                return { ...m, text: plaintext, isEncryptedLocked: false };
+              } catch (err) {
+                dlog.warn("Thread", `Failed to decrypt message ${m.id}`, err);
+                return { ...m, isEncryptedLocked: true };
+              }
+            } else if (m.encrypted) {
+              return { ...m, isEncryptedLocked: true };
+            }
+            return m;
+          }));
+          dispatch({ type: "OPEN_THREAD", threadId: state.activeThreadId!, messages: decrypted });
         }
       })
       .catch((err) => {

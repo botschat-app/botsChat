@@ -15,6 +15,12 @@ export interface ForegroundOptions {
   onResume?: () => void;
 }
 
+export interface ForegroundHandle {
+  cleanup: () => void;
+  /** Re-send the current foreground/background state. Call after WS auth succeeds. */
+  resend: () => void;
+}
+
 /**
  * Send a focus.update message when the user switches channels/sessions
  * while already in the foreground.
@@ -27,7 +33,7 @@ export function sendFocusUpdate(
   dlog.info("Foreground", `Focus updated: ${sessionKey ?? "(none)"}`);
 }
 
-export function setupForegroundDetection(opts: ForegroundOptions): () => void {
+export function setupForegroundDetection(opts: ForegroundOptions): ForegroundHandle {
   const { wsClient, getActiveSessionKey, onResume } = opts;
 
   const notifyForeground = () => {
@@ -43,19 +49,23 @@ export function setupForegroundDetection(opts: ForegroundOptions): () => void {
 
   if (Capacitor.isNativePlatform()) {
     let cleanup: (() => void) | null = null;
+    let nativeIsActive = true;
 
     import("@capacitor/app").then(({ App }) => {
       const handle = App.addListener("appStateChange", ({ isActive }) => {
+        nativeIsActive = isActive;
         if (isActive) notifyForeground();
         else notifyBackground();
       });
       cleanup = () => handle.then((h) => h.remove());
     });
 
-    // Report initial foreground state once WS is connected
     notifyForeground();
 
-    return () => cleanup?.();
+    return {
+      cleanup: () => cleanup?.(),
+      resend: () => { if (nativeIsActive) notifyForeground(); else notifyBackground(); },
+    };
   }
 
   // Web: Use Page Visibility API
@@ -68,7 +78,8 @@ export function setupForegroundDetection(opts: ForegroundOptions): () => void {
 
   if (!document.hidden) notifyForeground();
 
-  return () => {
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  return {
+    cleanup: () => document.removeEventListener("visibilitychange", handleVisibilityChange),
+    resend: () => { if (!document.hidden) notifyForeground(); else notifyBackground(); },
   };
 }
