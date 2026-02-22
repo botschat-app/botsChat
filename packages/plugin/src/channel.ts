@@ -11,6 +11,13 @@ import { BotsChatCloudClient } from "./ws-client.js";
 import crypto from "crypto";
 import { encryptText, encryptBytes, decryptText, decryptBytes, toBase64, fromBase64 } from "./e2e-crypto.js";
 
+/** Subset of OpenClaw's ReplyPayload that the deliver callback receives. */
+type DeliverPayload = {
+  text?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+};
+
 // ---------------------------------------------------------------------------
 // A2UI message-tool hints — injected via agentPrompt.messageToolHints so
 // the agent knows it can output interactive UI components.  These strings
@@ -638,44 +645,69 @@ async function handleCloudMessage(
       // Create a reply dispatcher that sends responses back through the cloud WSS
       // NOTE: reuses `client` from line ~424 (same block scope, same value)
       console.log(`[botschat] client for accountId=${ctx.accountId}: connected=${client?.connected}`);
-      const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}`);
+      const deliver = async (payload: DeliverPayload) => {
+        const mediaList = payload.mediaUrls?.length
+          ? payload.mediaUrls
+          : payload.mediaUrl
+            ? [payload.mediaUrl]
+            : [];
+        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}, mediaCount=${mediaList.length}`);
         if (!client?.connected) { console.log("[botschat][deliver] SKIP - not connected"); return; }
-        const messageId = crypto.randomUUID();
-        let text = payload.text ?? "";
-        let caption = payload.text ?? "";
-        let encrypted = false;
 
-        if (client.e2eKey && text) {
-          try {
-            const ct = await encryptText(client.e2eKey, text, messageId);
-            text = toBase64(ct);
-            caption = text;
-            encrypted = true;
-            console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}, encrypted=${encrypted}`);
-          } catch (err) {
-            console.error("[botschat][deliver] E2E encrypt failed:", err);
+        if (mediaList.length > 0) {
+          let first = true;
+          for (const mediaUrl of mediaList) {
+            const messageId = crypto.randomUUID();
+            const rawCaption = first ? (payload.text ?? "") : "";
+            first = false;
+            let caption = rawCaption;
+            let encrypted = false;
+
+            if (client.e2eKey && caption) {
+              try {
+                const ct = await encryptText(client.e2eKey, caption, messageId);
+                caption = toBase64(ct);
+                encrypted = true;
+              } catch (err) {
+                console.error("[botschat][deliver] E2E encrypt caption failed:", err);
+              }
+            }
+
+            const notifyPreviewText = (encrypted && client.notifyPreview && rawCaption)
+              ? (rawCaption.length > 100 ? rawCaption.slice(0, 100) + "…" : rawCaption)
+              : undefined;
+            console.log(`[botschat][deliver] sending: type=agent.media, encrypted=${encrypted}, messageId=${messageId}`);
+            client.send({
+              type: "agent.media",
+              sessionKey: msg.sessionKey,
+              mediaUrl,
+              caption: caption || undefined,
+              threadId,
+              messageId,
+              encrypted,
+              ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
+            });
           }
-        } else {
-          console.log(`[botschat][deliver] no encryption: hasKey=${!!client.e2eKey}, textLen=${text.length}`);
-        }
-
-        const notifyPreviewText = (encrypted && client.notifyPreview && payload.text)
-          ? (payload.text.length > 100 ? payload.text.slice(0, 100) + "…" : payload.text)
-          : undefined;
-        console.log(`[botschat][deliver] sending: type=${payload.mediaUrl ? "agent.media" : "agent.text"}, encrypted=${encrypted}, messageId=${messageId}, notifyPreview=${!!notifyPreviewText}`);
-        if (payload.mediaUrl) {
-          client.send({
-            type: "agent.media",
-            sessionKey: msg.sessionKey,
-            mediaUrl: payload.mediaUrl,
-            caption: encrypted ? caption : payload.text,
-            threadId,
-            messageId,
-            encrypted,
-            ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
-          });
         } else if (payload.text) {
+          const messageId = crypto.randomUUID();
+          let text = payload.text;
+          let encrypted = false;
+
+          if (client.e2eKey && text) {
+            try {
+              const ct = await encryptText(client.e2eKey, text, messageId);
+              text = toBase64(ct);
+              encrypted = true;
+              console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}`);
+            } catch (err) {
+              console.error("[botschat][deliver] E2E encrypt failed:", err);
+            }
+          }
+
+          const notifyPreviewText = (encrypted && client.notifyPreview && payload.text)
+            ? (payload.text.length > 100 ? payload.text.slice(0, 100) + "…" : payload.text)
+            : undefined;
+          console.log(`[botschat][deliver] sending: type=agent.text, encrypted=${encrypted}, messageId=${messageId}`);
           client.send({
             type: "agent.text",
             sessionKey: msg.sessionKey,
@@ -686,9 +718,6 @@ async function handleCloudMessage(
             ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
           });
           // Detect model-change confirmations and emit model.changed
-          // Handles both formats:
-          //   "Model set to provider/model."  (no parentheses)
-          //   "Model set to Friendly Name (provider/model)."  (with parentheses)
           const modelMatch = payload.text.match(
             /Model (?:set to|reset to default)\b.*?([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\/[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)/,
           );
@@ -731,9 +760,7 @@ async function handleCloudMessage(
       const { dispatcher, replyOptions, markDispatchIdle } =
         runtime.channel.reply.createReplyDispatcherWithTyping({
           deliver: async (payload: unknown) => {
-            // The payload from the dispatcher is a ReplyPayload
-            const p = payload as { text?: string; mediaUrl?: string };
-            await deliver(p);
+            await deliver(payload as DeliverPayload);
           },
           onTypingStart: () => {},
           onTypingStop: () => {},
@@ -1280,11 +1307,18 @@ async function handleTaskRun(
         }, THROTTLE_MS);
       };
 
-      const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        if (payload.text) {
-          completedParts.push(payload.text);
+      const deliver = async (payload: DeliverPayload) => {
+        const mediaList = payload.mediaUrls?.length
+          ? payload.mediaUrls
+          : payload.mediaUrl
+            ? [payload.mediaUrl]
+            : [];
+        const parts: string[] = [];
+        if (payload.text) parts.push(payload.text);
+        for (const url of mediaList) parts.push(`![media](${url})`);
+        if (parts.length > 0) {
+          completedParts.push(parts.join("\n"));
           currentStreamText = "";
-          // Flush immediately on completed message
           if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
           sendOutput();
         }
@@ -1300,8 +1334,7 @@ async function handleTaskRun(
       const { dispatcher, replyOptions, markDispatchIdle } =
         runtime.channel.reply.createReplyDispatcherWithTyping({
           deliver: async (payload: unknown) => {
-            const p = payload as { text?: string; mediaUrl?: string };
-            await deliver(p);
+            await deliver(payload as DeliverPayload);
           },
           onTypingStart: () => {},
           onTypingStop: () => {},
