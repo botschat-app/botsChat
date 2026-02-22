@@ -39,9 +39,10 @@ export type BotsChatChannelConfig = {
 
 /** Plugin → Cloud (outbound, agent responses) */
 export type CloudOutbound =
-  | { type: "auth"; token: string; agents?: string[]; model?: string }
+  | { type: "auth"; token: string; agentId?: string; agentType?: string; agents?: string[]; model?: string }
   | {
       type: "agent.text";
+      agentId?: string;
       sessionKey: string;
       text: string;
       replyToId?: string;
@@ -128,7 +129,7 @@ export type CloudOutbound =
 
 /** Cloud → Plugin (inbound, user messages) */
 export type CloudInbound =
-  | { type: "auth.ok"; userId?: string }
+  | { type: "auth.ok"; userId?: string; agentId?: string; availableAgents?: Array<{ id: string; name: string; type: string; role: string; capabilities: string[]; status: string }> }
   | { type: "auth.fail"; reason: string }
   | {
       type: "user.message";
@@ -136,6 +137,7 @@ export type CloudInbound =
       text: string;
       userId: string;
       messageId: string;
+      targetAgentId?: string;
       mediaUrl?: string;
       /** Parent message fields — attached by ConnectionDO for thread messages */
       parentMessageId?: string;

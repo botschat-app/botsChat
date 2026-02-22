@@ -27,7 +27,7 @@ channels.get("/", async (c) => {
       id: r.id,
       name: r.name,
       description: r.description,
-      openclawAgentId: r.provider_agent_id,
+      providerAgentId: r.provider_agent_id,
       systemPrompt: r.system_prompt,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -38,10 +38,10 @@ channels.get("/", async (c) => {
 /** POST /api/channels — create a new channel */
 channels.post("/", async (c) => {
   const userId = c.get("userId");
-  const { name, description, openclawAgentId, systemPrompt } = await c.req.json<{
+  const { name, description, providerAgentId, systemPrompt } = await c.req.json<{
     name: string;
     description?: string;
-    openclawAgentId?: string;
+    providerAgentId?: string;
     systemPrompt?: string;
   }>();
 
@@ -52,7 +52,7 @@ channels.post("/", async (c) => {
   const id = generateId("ch_");
   // Default agent ID derived from channel name (slug)
   const agentId =
-    openclawAgentId?.trim() ||
+    providerAgentId?.trim() ||
     name
       .trim()
       .toLowerCase()
@@ -88,7 +88,7 @@ channels.post("/", async (c) => {
       id,
       name: name.trim(),
       description: description?.trim() ?? "",
-      openclawAgentId: agentId,
+      providerAgentId: agentId,
       systemPrompt: systemPrompt?.trim() ?? "",
     },
     201,
@@ -120,7 +120,7 @@ channels.get("/:id", async (c) => {
     id: row.id,
     name: row.name,
     description: row.description,
-    openclawAgentId: row.provider_agent_id,
+    providerAgentId: row.provider_agent_id,
     systemPrompt: row.system_prompt,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

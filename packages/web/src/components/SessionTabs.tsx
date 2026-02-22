@@ -141,7 +141,7 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
       // Auto-create a "General" channel for the default agent (no channelId yet)
       if (!effectiveChannelId) {
         dlog.info("Session", "No channel for default agent — auto-creating General channel");
-        const channel = await channelsApi.create({ name: "General", openclawAgentId: "main" });
+        const channel = await channelsApi.create({ name: "General", providerAgentId: "main" });
         effectiveChannelId = channel.id;
         // Reload agents and channels so the default agent picks up the new channelId
         const [{ agents }, { channels: chs }] = await Promise.all([

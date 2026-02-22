@@ -402,7 +402,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // These fields belong to OpenClaw and are NOT stored in D1.
       const scanMap = new Map(action.scanTasks.map((s) => [s.cronJobId, s]));
       const merged = state.cronTasks.map((task) => {
-        const scan = task.openclawCronJobId ? scanMap.get(task.openclawCronJobId) : null;
+        const scan = task.providerJobId ? scanMap.get(task.providerJobId) : null;
         if (!scan) return task;
         return {
           ...task,
@@ -414,7 +414,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       });
       // Also merge into the messages-view tasks list
       const mergedTasks = state.tasks.map((task) => {
-        const scan = task.openclawCronJobId ? scanMap.get(task.openclawCronJobId) : null;
+        const scan = task.providerJobId ? scanMap.get(task.providerJobId) : null;
         if (!scan) return task;
         return {
           ...task,

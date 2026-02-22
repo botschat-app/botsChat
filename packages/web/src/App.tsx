@@ -435,7 +435,7 @@ export default function App() {
       dispatch({ type: "SET_SESSIONS", sessions: [] });
 
       channelsApi
-        .create({ name: "General", openclawAgentId: "main" })
+        .create({ name: "General", providerAgentId: "main" })
         .then(async (channel) => {
           dlog.info("Sessions", `General channel created: ${channel.id}`);
           // Reload agents and channels so the default agent picks up the new channelId
@@ -554,11 +554,11 @@ export default function App() {
 
     const match = baseKey.match(/^agent:([^:]+):/);
     if (!match) return;
-    const openclawAgentId = match[1];
+    const providerAgentId = match[1];
 
     const st = stateRef.current;
     const targetAgent = st.agents.find((a) =>
-      a.sessionKey.startsWith(`agent:${openclawAgentId}:`),
+      a.sessionKey.startsWith(`agent:${providerAgentId}:`),
     );
     if (!targetAgent) return;
 

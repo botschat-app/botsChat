@@ -215,7 +215,7 @@ protectedApp.get("/tasks", async (c) => {
   const kind = c.req.query("kind") ?? "background";
 
   const { results } = await c.env.DB.prepare(
-    `SELECT t.id, t.channel_id, t.name, t.kind, t.openclaw_cron_job_id,
+    `SELECT t.id, t.channel_id, t.name, t.kind, t.provider_job_id,
             t.session_key, t.enabled, t.created_at, t.updated_at
      FROM tasks t
      JOIN channels ch ON t.channel_id = ch.id
@@ -228,7 +228,7 @@ protectedApp.get("/tasks", async (c) => {
       channel_id: string;
       name: string;
       kind: string;
-      openclaw_cron_job_id: string | null;
+      provider_job_id: string | null;
       session_key: string | null;
       enabled: number;
       created_at: number;
@@ -241,7 +241,7 @@ protectedApp.get("/tasks", async (c) => {
       channelId: r.channel_id,
       name: r.name,
       kind: r.kind,
-      openclawCronJobId: r.openclaw_cron_job_id,
+      providerJobId: r.provider_job_id,
       sessionKey: r.session_key,
       enabled: !!r.enabled,
       createdAt: r.created_at,

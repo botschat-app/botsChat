@@ -383,7 +383,7 @@ export class ConnectionDO implements DurableObject {
     if (msg.type === "task.schedule.ack" && msg.ok && msg.taskId && msg.cronJobId) {
       try {
         await this.env.DB.prepare(
-          "UPDATE tasks SET openclaw_cron_job_id = ? WHERE id = ?",
+          "UPDATE tasks SET provider_job_id = ? WHERE id = ?",
         ).bind(msg.cronJobId, msg.taskId).run();
         console.log(`[DO] Updated task ${msg.taskId} with cronJobId ${msg.cronJobId}`);
       } catch (err) {
@@ -1445,7 +1445,7 @@ export class ConnectionDO implements DurableObject {
 
         // Check if a matching task already exists
         const existingTask = await this.env.DB.prepare(
-          "SELECT id, session_key FROM tasks WHERE openclaw_cron_job_id = ?",
+          "SELECT id, session_key FROM tasks WHERE provider_job_id = ?",
         )
           .bind(t.cronJobId)
           .first<{ id: string; session_key: string }>();
@@ -1464,7 +1464,7 @@ export class ConnectionDO implements DurableObject {
             t.cronJobId,
           ];
           await this.env.DB.prepare(
-            `UPDATE tasks SET ${updateParts.join(", ")} WHERE openclaw_cron_job_id = ?`,
+            `UPDATE tasks SET ${updateParts.join(", ")} WHERE provider_job_id = ?`,
           )
             .bind(...updateVals)
             .run();
@@ -1483,7 +1483,7 @@ export class ConnectionDO implements DurableObject {
           // D1 only stores basic task metadata — schedule/instructions/model
           // belong to OpenClaw and are delivered via task.scan.result WebSocket.
           await this.env.DB.prepare(
-            `INSERT INTO tasks (id, channel_id, name, kind, openclaw_cron_job_id, session_key, enabled)
+            `INSERT INTO tasks (id, channel_id, name, kind, provider_job_id, session_key, enabled)
              VALUES (?, ?, ?, 'background', ?, ?, ?)`,
           )
             .bind(taskId, defaultChannelId, taskName, t.cronJobId, sessionKey, t.enabled ? 1 : 0)
@@ -1494,7 +1494,7 @@ export class ConnectionDO implements DurableObject {
 
         // Resolve the task record for job persistence (may have just been created)
         const taskRecord = await this.env.DB.prepare(
-          "SELECT id, session_key FROM tasks WHERE openclaw_cron_job_id = ?",
+          "SELECT id, session_key FROM tasks WHERE provider_job_id = ?",
         )
           .bind(t.cronJobId)
           .first<{ id: string; session_key: string }>();
@@ -1704,7 +1704,7 @@ export class ConnectionDO implements DurableObject {
 
       // Find the task by cronJobId
       const task = await this.env.DB.prepare(
-        "SELECT id FROM tasks WHERE openclaw_cron_job_id = ?",
+        "SELECT id FROM tasks WHERE provider_job_id = ?",
       )
         .bind(cronJobId)
         .first<{ id: string }>();

@@ -180,7 +180,7 @@ export type Channel = {
   id: string;
   name: string;
   description: string;
-  openclawAgentId: string;
+  providerAgentId: string;
   systemPrompt: string;
   createdAt: number;
   updatedAt: number;
@@ -189,7 +189,7 @@ export type Channel = {
 export const channelsApi = {
   list: () => request<{ channels: Channel[] }>("GET", "/channels"),
   get: (id: string) => request<Channel>("GET", `/channels/${id}`),
-  create: (data: { name: string; description?: string; systemPrompt?: string; openclawAgentId?: string }) =>
+  create: (data: { name: string; description?: string; systemPrompt?: string; providerAgentId?: string }) =>
     request<Channel>("POST", "/channels", data),
   update: (id: string, data: Partial<Pick<Channel, "name" | "description" | "systemPrompt">>) =>
     request<{ ok: boolean }>("PATCH", `/channels/${id}`, data),
@@ -221,7 +221,7 @@ export type Task = {
   id: string;
   name: string;
   kind: "background" | "adhoc";
-  openclawCronJobId: string | null;
+  providerJobId: string | null;
   schedule: string | null;
   instructions: string | null;
   model: string | null;

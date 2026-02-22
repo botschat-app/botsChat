@@ -10,7 +10,7 @@ const tasks = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 async function pushScheduleToOpenClaw(
   env: Env,
   userId: string,
-  task: { taskId: string; name?: string; openclawCronJobId: string; agentId: string; schedule: string; instructions: string; enabled: boolean; model?: string },
+  task: { taskId: string; name?: string; providerJobId: string; agentId: string; schedule: string; instructions: string; enabled: boolean; model?: string },
 ): Promise<void> {
   try {
     const doId = env.CONNECTION_DO.idFromName(userId);
@@ -23,7 +23,7 @@ async function pushScheduleToOpenClaw(
           type: "task.schedule",
           taskId: task.taskId,
           name: task.name,
-          cronJobId: task.openclawCronJobId,
+          cronJobId: task.providerJobId,
           agentId: task.agentId,
           schedule: task.schedule,
           instructions: task.instructions,
@@ -80,14 +80,14 @@ tasks.get("/", async (c) => {
   // Note: schedule, instructions, model are NOT stored in D1.
   // They belong to OpenClaw and are delivered to the frontend via WebSocket task.scan.result.
   const { results } = await c.env.DB.prepare(
-    "SELECT id, name, kind, openclaw_cron_job_id, session_key, enabled, created_at, updated_at FROM tasks WHERE channel_id = ? ORDER BY kind ASC, created_at ASC",
+    "SELECT id, name, kind, provider_job_id, session_key, enabled, created_at, updated_at FROM tasks WHERE channel_id = ? ORDER BY kind ASC, created_at ASC",
   )
     .bind(channelId)
     .all<{
       id: string;
       name: string;
       kind: string;
-      openclaw_cron_job_id: string | null;
+      provider_job_id: string | null;
       session_key: string | null;
       enabled: number;
       created_at: number;
@@ -99,7 +99,7 @@ tasks.get("/", async (c) => {
       id: r.id,
       name: r.name,
       kind: r.kind,
-      openclawCronJobId: r.openclaw_cron_job_id,
+      providerJobId: r.provider_job_id,
       sessionKey: r.session_key,
       enabled: !!r.enabled,
       createdAt: r.created_at,
@@ -153,10 +153,10 @@ tasks.post("/", async (c) => {
   }
 
   // D1 only stores basic task metadata — schedule/instructions/model belong to OpenClaw.
-  // openclawCronJobId is initially null for new background tasks; it will be set
+  // providerJobId is initially null for new background tasks; it will be set
   // when the plugin creates the cron job and sends back a task.schedule.ack.
   await c.env.DB.prepare(
-    "INSERT INTO tasks (id, channel_id, name, kind, openclaw_cron_job_id, session_key) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tasks (id, channel_id, name, kind, provider_job_id, session_key) VALUES (?, ?, ?, ?, ?, ?)",
   )
     .bind(id, channelId, name.trim(), kind, null, sessionKey)
     .run();
@@ -166,7 +166,7 @@ tasks.post("/", async (c) => {
     await pushScheduleToOpenClaw(c.env, userId, {
       taskId: id,
       name: name.trim(),
-      openclawCronJobId: "",
+      providerJobId: "",
       agentId,
       schedule: schedule.trim(),
       instructions: instructions?.trim() ?? "",
@@ -179,7 +179,7 @@ tasks.post("/", async (c) => {
       id,
       name: name.trim(),
       kind,
-      openclawCronJobId: null,
+      providerJobId: null,
       sessionKey,
       enabled: true,
     },
@@ -203,13 +203,13 @@ tasks.patch("/:taskId", async (c) => {
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
   const existingTask = await c.env.DB.prepare(
-    "SELECT id, kind, openclaw_cron_job_id, enabled FROM tasks WHERE id = ? AND channel_id = ?",
+    "SELECT id, kind, provider_job_id, enabled FROM tasks WHERE id = ? AND channel_id = ?",
   )
     .bind(taskId, channelId)
     .first<{
       id: string;
       kind: string;
-      openclaw_cron_job_id: string | null;
+      provider_job_id: string | null;
       enabled: number;
     }>();
 
@@ -250,12 +250,12 @@ tasks.patch("/:taskId", async (c) => {
   // Push OpenClaw-owned fields directly to OpenClaw for background tasks.
   // The client must send ALL OpenClaw fields (schedule, instructions, enabled)
   // together since they are not stored in D1.
-  if (existingTask.kind === "background" && existingTask.openclaw_cron_job_id) {
+  if (existingTask.kind === "background" && existingTask.provider_job_id) {
     const needsPush = body.schedule !== undefined || body.instructions !== undefined || body.enabled !== undefined || body.model !== undefined;
     if (needsPush) {
       await pushScheduleToOpenClaw(c.env, userId, {
         taskId: taskId,
-        openclawCronJobId: existingTask.openclaw_cron_job_id,
+        providerJobId: existingTask.provider_job_id,
         agentId: channel.provider_agent_id,
         schedule: body.schedule ?? "",
         instructions: body.instructions ?? "",
@@ -284,18 +284,18 @@ tasks.post("/:taskId/run", async (c) => {
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
   const task = await c.env.DB.prepare(
-    "SELECT id, kind, openclaw_cron_job_id FROM tasks WHERE id = ? AND channel_id = ?",
+    "SELECT id, kind, provider_job_id FROM tasks WHERE id = ? AND channel_id = ?",
   )
     .bind(taskId, channelId)
     .first<{
       id: string;
       kind: string;
-      openclaw_cron_job_id: string | null;
+      provider_job_id: string | null;
     }>();
 
   if (!task) return c.json({ error: "Task not found" }, 404);
   if (task.kind !== "background") return c.json({ error: "Only background tasks can be triggered" }, 400);
-  if (!task.openclaw_cron_job_id) return c.json({ error: "Task has no associated cron job" }, 400);
+  if (!task.provider_job_id) return c.json({ error: "Task has no associated cron job" }, 400);
 
   // Send a task.run message to OpenClaw via ConnectionDO.
   // Instructions and model are not included — the plugin reads them
@@ -309,7 +309,7 @@ tasks.post("/:taskId/run", async (c) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "task.run",
-          cronJobId: task.openclaw_cron_job_id,
+          cronJobId: task.provider_job_id,
           agentId: channel.provider_agent_id,
         }),
       }),
@@ -343,10 +343,10 @@ tasks.delete("/:taskId", async (c) => {
 
   // Get task to check if it's background (need to delete CronJob)
   const task = await c.env.DB.prepare(
-    "SELECT kind, openclaw_cron_job_id FROM tasks WHERE id = ? AND channel_id = ?",
+    "SELECT kind, provider_job_id FROM tasks WHERE id = ? AND channel_id = ?",
   )
     .bind(taskId, channelId)
-    .first<{ kind: string; openclaw_cron_job_id: string | null }>();
+    .first<{ kind: string; provider_job_id: string | null }>();
 
   await c.env.DB.prepare(
     "DELETE FROM tasks WHERE id = ? AND channel_id = ?",
@@ -358,15 +358,15 @@ tasks.delete("/:taskId", async (c) => {
   await c.env.DB.prepare("DELETE FROM jobs WHERE task_id = ?").bind(taskId).run();
 
   // Push delete to OpenClaw for background tasks
-  if (task?.kind === "background" && task.openclaw_cron_job_id) {
+  if (task?.kind === "background" && task.provider_job_id) {
     // Record the deletion so task.scan won't re-create the task
     await c.env.DB.prepare(
       "INSERT OR IGNORE INTO deleted_cron_jobs (cron_job_id, user_id) VALUES (?, ?)",
     )
-      .bind(task.openclaw_cron_job_id, userId)
+      .bind(task.provider_job_id, userId)
       .run();
 
-    await pushDeleteToOpenClaw(c.env, userId, task.openclaw_cron_job_id);
+    await pushDeleteToOpenClaw(c.env, userId, task.provider_job_id);
   }
 
   return c.json({ ok: true });
