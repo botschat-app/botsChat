@@ -317,14 +317,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         threadReplyCounts: updatedCounts,
       };
     }
-    case "SET_OPENCLAW_CONNECTED":
-      // connection.status carries the gateway defaultModel (OpenClaw primary).
-      // Prefer user's saved default (from API/settings); only use gateway default when user has not set one.
+    case "SET_OPENCLAW_CONNECTED": {
+      const anyAgentConnected = action.connected || Object.values(state.agentConnections).some(Boolean);
       return {
         ...state,
-        openclawConnected: action.connected,
+        openclawConnected: anyAgentConnected,
         defaultModel: state.defaultModel ?? action.defaultModel ?? null,
       };
+    }
     case "SET_SESSION_MODEL":
       return { ...state, sessionModel: action.model };
     case "SET_WS_CONNECTED":
@@ -496,22 +496,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         cronJobs: updateSummary(state.cronJobs),
       };
     }
-    case "SET_V2_AGENTS":
+    case "SET_V2_AGENTS": {
+      const connections = Object.fromEntries(
+        action.agents.map((a) => [a.id, a.status === "connected"]),
+      );
+      const anyV2Connected = Object.values(connections).some(Boolean);
       return {
         ...state,
         v2Agents: action.agents,
-        agentConnections: Object.fromEntries(
-          action.agents.map((a) => [a.id, a.status === "connected"]),
-        ),
+        agentConnections: connections,
+        openclawConnected: anyV2Connected || state.openclawConnected,
       };
-    case "SET_AGENT_CONNECTION":
+    }
+    case "SET_AGENT_CONNECTION": {
+      const newConnections = { ...state.agentConnections, [action.agentId]: action.connected };
+      const anyConnected = Object.values(newConnections).some(Boolean);
       return {
         ...state,
-        agentConnections: {
-          ...state.agentConnections,
-          [action.agentId]: action.connected,
-        },
+        agentConnections: newConnections,
+        openclawConnected: anyConnected || state.openclawConnected,
       };
+    }
     case "LOGOUT":
       return { ...initialState };
     default:

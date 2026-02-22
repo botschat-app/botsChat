@@ -911,7 +911,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
             placeholder={
               state.openclawConnected
                 ? `Message #${channelName}`
-                : "OpenClaw is offline…"
+                : "No agents connected…"
             }
             disabled={!state.openclawConnected}
             rows={1}

@@ -126,7 +126,9 @@ export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () =>
             style={{ background: state.openclawConnected ? "var(--accent-green)" : "var(--accent-red)" }}
           />
           <span className="text-tiny text-[--text-muted]">
-            {state.openclawConnected ? "OpenClaw connected" : "OpenClaw offline"}
+            {state.openclawConnected
+              ? `${Object.values(state.agentConnections).filter(Boolean).length || 1} agent(s) connected`
+              : "No agents connected"}
           </span>
         </div>
       </div>
