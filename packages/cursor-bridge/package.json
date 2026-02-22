@@ -1,0 +1,22 @@
+{
+  "name": "@botschat/cursor-bridge",
+  "version": "0.1.0",
+  "description": "BotsChat Cursor CLI Bridge — connects Cursor Agent CLI to BotsChat Cloud",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "cursor-bridge": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.7.0"
+  }
+}
