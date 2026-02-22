@@ -26,6 +26,7 @@ import { OnboardingPage } from "./components/OnboardingPage";
 import { ConnectionSettings } from "./components/ConnectionSettings";
 import { E2ESettings } from "./components/E2ESettings";
 import { AccountSettings } from "./components/AccountSettings";
+import { AgentSettings } from "./components/AgentSettings";
 import { DebugLogPanel } from "./components/DebugLogPanel";
 import { CronSidebar } from "./components/CronSidebar";
 import { CronDetail } from "./components/CronDetail";
@@ -54,7 +55,8 @@ export default function App() {
   const pushNavTargetRef = useRef<string | null>(null);
 
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"general" | "connection" | "security">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "agents" | "connection" | "security">("general");
+  const [showAgentSettings, setShowAgentSettings] = useState(false);
 
   // Track whether the initial channels fetch has completed (prevents onboarding flash)
   const [channelsLoadedOnce, setChannelsLoadedOnce] = useState(false);
@@ -1192,6 +1194,17 @@ export default function App() {
                 <button
                   className="pb-2 text-caption font-bold transition-colors"
                   style={{
+                    color: settingsTab === "agents" ? "var(--text-primary)" : "var(--text-muted)",
+                    borderBottom: settingsTab === "agents" ? "2px solid var(--bg-active)" : "2px solid transparent",
+                    marginBottom: "-1px",
+                  }}
+                  onClick={() => setSettingsTab("agents")}
+                >
+                  Agents
+                </button>
+                <button
+                  className="pb-2 text-caption font-bold transition-colors"
+                  style={{
                     color: settingsTab === "security" ? "var(--text-primary)" : "var(--text-muted)",
                     borderBottom: settingsTab === "security" ? "2px solid var(--bg-active)" : "2px solid transparent",
                     marginBottom: "-1px",
@@ -1251,6 +1264,21 @@ export default function App() {
                   <ConnectionSettings />
                 )}
 
+                {settingsTab === "agents" && (
+                  <div className="space-y-3">
+                    <p className="text-caption" style={{ color: "var(--text-secondary)" }}>
+                      Manage your AI agents. Each agent has a type (engine) and role (persona).
+                    </p>
+                    <button
+                      onClick={() => setShowAgentSettings(true)}
+                      className="w-full py-2.5 text-caption font-medium rounded-lg"
+                      style={{ background: "var(--accent-blue)", color: "#fff" }}
+                    >
+                      Open Agent Manager
+                    </button>
+                  </div>
+                )}
+
                 {settingsTab === "security" && (
                   <E2ESettings />
                 )}
@@ -1271,6 +1299,10 @@ export default function App() {
             </div>
           </div>
         )}
+
+      {showAgentSettings && (
+        <AgentSettings onClose={() => setShowAgentSettings(false)} />
+      )}
 
       </AppDispatchContext.Provider>
     </AppStateContext.Provider>
