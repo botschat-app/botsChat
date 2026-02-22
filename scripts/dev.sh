@@ -9,6 +9,9 @@
 #   ./scripts/dev.sh sync     — sync plugin to mini.local + rebuild + restart gateway
 #   ./scripts/dev.sh logs     — tail gateway logs on mini.local
 #   ./scripts/dev.sh mock     — start mock OpenClaw standalone (foreground)
+#   ./scripts/dev.sh v2       — v2 env: build + migrate (v2 DB) + start on port 8788
+#   ./scripts/dev.sh v2:reset — nuke v2 local DB, re-migrate, then start
+#   ./scripts/dev.sh v2:deploy — deploy v2 to Cloudflare
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -214,6 +217,40 @@ do_logs() {
   ssh mini.local 'tail -f ~/.openclaw/logs/gateway.log'
 }
 
+# ── v2 environment ──────────────────────────────────────────────────
+
+V2_CONFIG="wrangler-v2.toml"
+V2_DB="botschat-v2-db"
+V2_PORT=8788
+
+do_v2_migrate() {
+  info "Applying D1 migrations (v2 local)…"
+  npx wrangler d1 migrations apply "$V2_DB" --local --config "$V2_CONFIG"
+  ok "v2 migrations applied"
+}
+
+do_v2_reset() {
+  warn "Nuking v2 local D1 database…"
+  rm -rf "$ROOT/.wrangler/state/v4/d1/${V2_DB}"
+  ok "v2 local DB wiped"
+  do_v2_migrate
+}
+
+do_v2_start() {
+  kill_port "$V2_PORT"
+  info "Starting wrangler dev (v2) on 0.0.0.0:${V2_PORT}…"
+  exec npx wrangler dev --config "$V2_CONFIG" --ip 0.0.0.0 --port "$V2_PORT" \
+    --var ENVIRONMENT:development --var DEV_AUTH_SECRET:"$DEV_AUTH_SECRET"
+}
+
+do_v2_deploy() {
+  info "Building web frontend…"
+  npm run build -w packages/web
+  info "Deploying v2 to Cloudflare…"
+  npx wrangler deploy --config "$V2_CONFIG"
+  ok "v2 deployed"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 cmd="${1:-}"
@@ -244,6 +281,22 @@ case "$cmd" in
   mock)
     shift
     do_mock "$@"
+    ;;
+  v2)
+    do_build_web
+    do_v2_migrate
+    do_v2_start
+    ;;
+  v2:reset)
+    do_v2_reset
+    do_build_web
+    do_v2_start
+    ;;
+  v2:migrate)
+    do_v2_migrate
+    ;;
+  v2:deploy)
+    do_v2_deploy
     ;;
   *)
     # Default: full dev experience — build + migrate + server + mock + browser

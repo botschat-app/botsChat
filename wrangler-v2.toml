@@ -1,0 +1,44 @@
+name = "botschat-v2"
+main = "packages/api/src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Static Assets (React SPA) ---
+[assets]
+directory = "packages/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# --- D1 Database (v2 — multi-agent schema) ---
+[[d1_databases]]
+binding = "DB"
+database_name = "botschat-v2-db"
+database_id = "079c0556-7924-49f7-b575-6c66ba0bd070"
+migrations_dir = "migrations"
+
+# --- R2 Bucket (v2) ---
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "botschat-v2-media"
+
+# --- Durable Objects ---
+[durable_objects]
+bindings = [
+  { name = "CONNECTION_DO", class_name = "ConnectionDO" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConnectionDO"]
+
+# --- Environment Variables ---
+# v2 staging: use "development" to enable dev-auth + email login for testing
+[vars]
+ENVIRONMENT = "development"
+FIREBASE_PROJECT_ID = "botschat-130ff"
+GOOGLE_WEB_CLIENT_ID = "670756745871-1anrnjukhhu0a550j86blm771a2k3jou.apps.googleusercontent.com"
+GOOGLE_IOS_CLIENT_ID = "670756745871-ct1k370fk3h5oj3f3gdabqv1nq2b7r54.apps.googleusercontent.com"
+
+# --- Dev settings ---
+[dev]
+port = 8788

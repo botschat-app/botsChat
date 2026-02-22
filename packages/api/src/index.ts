@@ -5,6 +5,7 @@ import { authMiddleware, verifyToken, getJwtSecret, verifyMediaSignature, signMe
 import { randomUUID } from "./utils/uuid.js";
 import { auth } from "./routes/auth.js";
 import { agents } from "./routes/agents.js";
+import { agentsV2 } from "./routes/agents-v2.js";
 import { channels } from "./routes/channels.js";
 import { tasks } from "./routes/tasks.js";
 import { jobs } from "./routes/jobs.js";
@@ -94,6 +95,7 @@ app.route("/api/setup", setup);
 const protectedApp = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 protectedApp.use("/*", authMiddleware());
 protectedApp.route("/agents", agents);
+protectedApp.route("/v2/agents", agentsV2);
 protectedApp.route("/channels", channels);
 protectedApp.route("/models", models);
 protectedApp.get("/me", async (c) => {
