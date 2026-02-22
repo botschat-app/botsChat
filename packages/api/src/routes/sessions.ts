@@ -11,10 +11,10 @@ sessions.get("/", async (c) => {
 
   // Verify channel ownership
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -48,10 +48,10 @@ sessions.post("/", async (c) => {
 
   // Verify channel ownership
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -67,7 +67,7 @@ sessions.post("/", async (c) => {
 
   const sessionName = name?.trim() || `Session ${count + 1}`;
   const id = generateId("ses_");
-  const sessionKey = `agent:${channel.openclaw_agent_id}:botschat:${userId}:ses:${id}`;
+  const sessionKey = `agent:${channel.provider_agent_id}:botschat:${userId}:ses:${id}`;
 
   await c.env.DB.prepare(
     "INSERT INTO sessions (id, channel_id, user_id, name, session_key) VALUES (?, ?, ?, ?, ?)",

@@ -23,10 +23,10 @@ agents.get("/", async (c) => {
 
   // 1. Channel-based agents (each channel = one agent, default session = first adhoc task)
   const { results: channels } = await c.env.DB.prepare(
-    "SELECT id, name, openclaw_agent_id FROM channels WHERE user_id = ? ORDER BY created_at ASC",
+    "SELECT id, name, provider_agent_id FROM channels WHERE user_id = ? ORDER BY created_at ASC",
   )
     .bind(userId)
-    .all<{ id: string; name: string; openclaw_agent_id: string }>();
+    .all<{ id: string; name: string; provider_agent_id: string }>();
 
   // Find the "General" channel to associate with the default agent (for session support).
   // If the user has created a "General" channel (auto-created on first session "+"),
@@ -52,7 +52,7 @@ agents.get("/", async (c) => {
       .first<{ session_key: string }>();
 
     const sessionKey =
-      task?.session_key ?? `agent:${ch.openclaw_agent_id}:botschat:${userId}:adhoc`;
+      task?.session_key ?? `agent:${ch.provider_agent_id}:botschat:${userId}:adhoc`;
     list.push({
       id: ch.id,
       name: ch.name,

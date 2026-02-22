@@ -316,6 +316,15 @@ export class ConnectionDO implements DurableObject {
       return;
     }
 
+    // Resolve @channelName session keys to real adhoc task session keys
+    if (
+      (msg.type === "agent.text" || msg.type === "agent.media" || msg.type === "agent.a2ui" ||
+       msg.type === "agent.stream.start" || msg.type === "agent.stream.chunk" || msg.type === "agent.stream.end") &&
+      typeof msg.sessionKey === "string" && msg.sessionKey.startsWith("@")
+    ) {
+      msg.sessionKey = await this.resolveChannelSessionKey(msg.sessionKey);
+    }
+
     // Persist agent messages to D1 (skip transient stream events)
     if (msg.type === "agent.text" || msg.type === "agent.media" || msg.type === "agent.a2ui") {
       console.log("[DO] Agent outbound:", JSON.stringify({
@@ -1320,7 +1329,7 @@ export class ConnectionDO implements DurableObject {
   private async ensureDefaultChannel(userId: string): Promise<string> {
     // Check if a default channel already exists
     const existing = await this.env.DB.prepare(
-      "SELECT id FROM channels WHERE user_id = ? AND openclaw_agent_id = 'main' ORDER BY created_at ASC LIMIT 1",
+      "SELECT id FROM channels WHERE user_id = ? AND provider_agent_id = 'main' ORDER BY created_at ASC LIMIT 1",
     )
       .bind(userId)
       .first<{ id: string }>();
@@ -1330,7 +1339,7 @@ export class ConnectionDO implements DurableObject {
     // Create the default channel
     const channelId = this.generateId("ch_");
     await this.env.DB.prepare(
-      "INSERT INTO channels (id, user_id, name, description, openclaw_agent_id, system_prompt) VALUES (?, ?, 'Default', 'Auto-created channel for imported background tasks', 'main', '')",
+      "INSERT INTO channels (id, user_id, name, description, provider_agent_id, system_prompt) VALUES (?, ?, 'Default', 'Auto-created channel for imported background tasks', 'main', '')",
     )
       .bind(channelId, userId)
       .run();
@@ -1346,6 +1355,70 @@ export class ConnectionDO implements DurableObject {
 
     console.log(`[DO] Created default channel (${channelId}) for user ${userId}`);
     return channelId;
+  }
+
+  /**
+   * Resolve a "@channelName" session key to a real adhoc task session key.
+   * - "@default" → first channel (by created_at ASC)
+   * - "@SomeName" → channel matched by name (case-insensitive)
+   * Returns the original sessionKey if it doesn't start with "@".
+   */
+  private async resolveChannelSessionKey(rawSessionKey: string): Promise<string> {
+    if (!rawSessionKey.startsWith("@")) return rawSessionKey;
+
+    const userId = await this.state.storage.get<string>("userId");
+    if (!userId) {
+      console.error("[DO] resolveChannelSessionKey: no userId in storage");
+      return rawSessionKey;
+    }
+
+    const isDefault = rawSessionKey.toLowerCase() === "@default";
+    const channelName = isDefault ? null : rawSessionKey.slice(1);
+
+    let channel: { id: string; provider_agent_id: string } | null = null;
+
+    if (channelName) {
+      channel = await this.env.DB.prepare(
+        "SELECT id, provider_agent_id FROM channels WHERE user_id = ? AND LOWER(name) = LOWER(?) LIMIT 1",
+      )
+        .bind(userId, channelName)
+        .first<{ id: string; provider_agent_id: string }>();
+    }
+
+    if (!channel) {
+      channel = await this.env.DB.prepare(
+        "SELECT id, provider_agent_id FROM channels WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+      )
+        .bind(userId)
+        .first<{ id: string; provider_agent_id: string }>();
+    }
+
+    if (!channel) {
+      const channelId = await this.ensureDefaultChannel(userId);
+      channel = { id: channelId, provider_agent_id: "main" };
+    }
+
+    const task = await this.env.DB.prepare(
+      "SELECT session_key FROM tasks WHERE channel_id = ? AND kind = 'adhoc' LIMIT 1",
+    )
+      .bind(channel.id)
+      .first<{ session_key: string }>();
+
+    if (task?.session_key) {
+      console.log(`[DO] Resolved ${rawSessionKey} → ${task.session_key}`);
+      return task.session_key;
+    }
+
+    const taskId = this.generateId("tsk_");
+    const agentId = channel.provider_agent_id || "main";
+    const sessionKey = `agent:${agentId}:botschat:${userId}:adhoc`;
+    await this.env.DB.prepare(
+      "INSERT INTO tasks (id, channel_id, name, kind, session_key) VALUES (?, ?, 'Ad Hoc Chat', 'adhoc', ?)",
+    )
+      .bind(taskId, channel.id, sessionKey)
+      .run();
+    console.log(`[DO] Created adhoc task for channel ${channel.id}, resolved ${rawSessionKey} → ${sessionKey}`);
+    return sessionKey;
   }
 
   /** Generate a short random ID (URL-safe) using CSPRNG (bias-free). */

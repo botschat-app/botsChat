@@ -125,6 +125,12 @@ export const botschatPlugin = {
   outbound: {
     deliveryMode: "direct" as const,
 
+    resolveTarget: ({ to }: { to?: string; allowFrom?: string[]; accountId?: string | null; mode?: string }) => {
+      const trimmed = to?.trim();
+      if (trimmed) return { ok: true as const, to: trimmed };
+      return { ok: true as const, to: "@default" };
+    },
+
     sendText: async (ctx: {
       to: string;
       text: string;

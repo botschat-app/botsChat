@@ -9,14 +9,14 @@ channels.get("/", async (c) => {
   const userId = c.get("userId");
 
   const { results } = await c.env.DB.prepare(
-    "SELECT id, name, description, openclaw_agent_id, system_prompt, created_at, updated_at FROM channels WHERE user_id = ? ORDER BY created_at DESC",
+    "SELECT id, name, description, provider_agent_id, system_prompt, created_at, updated_at FROM channels WHERE user_id = ? ORDER BY created_at DESC",
   )
     .bind(userId)
     .all<{
       id: string;
       name: string;
       description: string;
-      openclaw_agent_id: string;
+      provider_agent_id: string;
       system_prompt: string;
       created_at: number;
       updated_at: number;
@@ -27,7 +27,7 @@ channels.get("/", async (c) => {
       id: r.id,
       name: r.name,
       description: r.description,
-      openclawAgentId: r.openclaw_agent_id,
+      openclawAgentId: r.provider_agent_id,
       systemPrompt: r.system_prompt,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -60,7 +60,7 @@ channels.post("/", async (c) => {
       .replace(/^-|-$/g, "");
 
   await c.env.DB.prepare(
-    "INSERT INTO channels (id, user_id, name, description, openclaw_agent_id, system_prompt) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO channels (id, user_id, name, description, provider_agent_id, system_prompt) VALUES (?, ?, ?, ?, ?, ?)",
   )
     .bind(id, userId, name.trim(), description?.trim() ?? "", agentId, systemPrompt?.trim() ?? "")
     .run();
@@ -101,14 +101,14 @@ channels.get("/:id", async (c) => {
   const channelId = c.req.param("id");
 
   const row = await c.env.DB.prepare(
-    "SELECT id, name, description, openclaw_agent_id, system_prompt, created_at, updated_at FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, name, description, provider_agent_id, system_prompt, created_at, updated_at FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
     .first<{
       id: string;
       name: string;
       description: string;
-      openclaw_agent_id: string;
+      provider_agent_id: string;
       system_prompt: string;
       created_at: number;
       updated_at: number;
@@ -120,7 +120,7 @@ channels.get("/:id", async (c) => {
     id: row.id,
     name: row.name,
     description: row.description,
-    openclawAgentId: row.openclaw_agent_id,
+    openclawAgentId: row.provider_agent_id,
     systemPrompt: row.system_prompt,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

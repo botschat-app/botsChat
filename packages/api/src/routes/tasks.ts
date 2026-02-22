@@ -70,10 +70,10 @@ tasks.get("/", async (c) => {
 
   // Verify channel ownership
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -115,10 +115,10 @@ tasks.post("/", async (c) => {
 
   // Verify channel ownership
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -137,7 +137,7 @@ tasks.post("/", async (c) => {
   }
 
   const id = generateId("tsk_");
-  const agentId = channel.openclaw_agent_id;
+  const agentId = channel.provider_agent_id;
 
   // Build session key based on task kind
   let sessionKey: string;
@@ -195,10 +195,10 @@ tasks.patch("/:taskId", async (c) => {
 
   // Verify ownership and get task+channel info
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -256,7 +256,7 @@ tasks.patch("/:taskId", async (c) => {
       await pushScheduleToOpenClaw(c.env, userId, {
         taskId: taskId,
         openclawCronJobId: existingTask.openclaw_cron_job_id,
-        agentId: channel.openclaw_agent_id,
+        agentId: channel.provider_agent_id,
         schedule: body.schedule ?? "",
         instructions: body.instructions ?? "",
         enabled: body.enabled ?? !!existingTask.enabled,
@@ -276,10 +276,10 @@ tasks.post("/:taskId/run", async (c) => {
 
   // Verify ownership
   const channel = await c.env.DB.prepare(
-    "SELECT id, openclaw_agent_id FROM channels WHERE id = ? AND user_id = ?",
+    "SELECT id, provider_agent_id FROM channels WHERE id = ? AND user_id = ?",
   )
     .bind(channelId, userId)
-    .first<{ id: string; openclaw_agent_id: string }>();
+    .first<{ id: string; provider_agent_id: string }>();
 
   if (!channel) return c.json({ error: "Channel not found" }, 404);
 
@@ -310,7 +310,7 @@ tasks.post("/:taskId/run", async (c) => {
         body: JSON.stringify({
           type: "task.run",
           cronJobId: task.openclaw_cron_job_id,
-          agentId: channel.openclaw_agent_id,
+          agentId: channel.provider_agent_id,
         }),
       }),
     );
