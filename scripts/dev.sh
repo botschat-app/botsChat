@@ -230,9 +230,9 @@ do_v2_migrate() {
 }
 
 do_v2_reset() {
-  warn "Nuking v2 local D1 database…"
-  rm -rf "$ROOT/.wrangler/state/v4/d1/${V2_DB}"
-  ok "v2 local DB wiped"
+  warn "Nuking v2 local state (DB + DO)…"
+  rm -rf "$ROOT/.wrangler/state"
+  ok "v2 local state wiped"
   do_v2_migrate
 }
 
