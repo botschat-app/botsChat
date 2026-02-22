@@ -368,6 +368,8 @@ async function verifyUserAccess(c: { req: { header: (n: string) => string | unde
 app.all("/api/gateway/:connId", async (c) => {
   let userId = c.req.param("connId");
 
+  let agentId: string | null = null;
+
   if (!userId.startsWith("u_")) {
     const token =
       c.req.query("token") ??
@@ -378,16 +380,28 @@ app.all("/api/gateway/:connId", async (c) => {
       return c.json({ error: "Token required for gateway connection" }, 401);
     }
 
-    const row = await c.env.DB.prepare(
-      "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
+    // v2: try agents table first (multi-agent), fallback to pairing_tokens (legacy)
+    const agentRow = await c.env.DB.prepare(
+      "SELECT id, user_id FROM agents WHERE pairing_token = ?",
     )
       .bind(token)
-      .first<{ user_id: string }>();
+      .first<{ id: string; user_id: string }>();
 
-    if (!row) {
-      return c.json({ error: "Invalid pairing token" }, 401);
+    if (agentRow) {
+      userId = agentRow.user_id;
+      agentId = agentRow.id;
+    } else {
+      const row = await c.env.DB.prepare(
+        "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
+      )
+        .bind(token)
+        .first<{ user_id: string }>();
+
+      if (!row) {
+        return c.json({ error: "Invalid pairing token" }, 401);
+      }
+      userId = row.user_id;
     }
-    userId = row.user_id;
   }
 
   // --- Worker-level rate limit (Cache API) ---
@@ -404,17 +418,27 @@ app.all("/api/gateway/:connId", async (c) => {
     });
   }
 
-  // Audit: update pairing token stats (only when not rate-limited)
+  // Audit: update connection stats (agents table for v2, pairing_tokens for legacy)
   const token = c.req.query("token") ?? c.req.header("X-Pairing-Token");
   if (token) {
     const clientIp = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
-    c.executionCtx.waitUntil(
-      c.env.DB.prepare(
-        `UPDATE pairing_tokens
-         SET last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1
-         WHERE token = ?`,
-      ).bind(clientIp, token).run(),
-    );
+    if (agentId) {
+      c.executionCtx.waitUntil(
+        c.env.DB.prepare(
+          `UPDATE agents
+           SET status = 'connected', last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1, updated_at = unixepoch()
+           WHERE id = ?`,
+        ).bind(clientIp, agentId).run(),
+      );
+    } else {
+      c.executionCtx.waitUntil(
+        c.env.DB.prepare(
+          `UPDATE pairing_tokens
+           SET last_connected_at = unixepoch(), last_ip = ?, connection_count = connection_count + 1
+           WHERE token = ?`,
+        ).bind(clientIp, token).run(),
+      );
+    }
   }
 
   const doId = c.env.CONNECTION_DO.idFromName(userId);
@@ -422,6 +446,7 @@ app.all("/api/gateway/:connId", async (c) => {
   const url = new URL(c.req.url);
   url.pathname = `/gateway/${userId}`;
   url.searchParams.set("verified", "1");
+  if (agentId) url.searchParams.set("agentId", agentId);
   const doResp = await stub.fetch(new Request(url.toString(), c.req.raw));
 
   // Cache the rate limit after the DO responds (success or rate-limited).
@@ -486,16 +511,28 @@ app.post("/api/plugin-upload", async (c) => {
   if (!token) {
     return c.json({ error: "Missing X-Pairing-Token header" }, 401);
   }
-  const row = await c.env.DB.prepare(
-    "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
+
+  // v2: try agents table first, fallback to pairing_tokens
+  const agentRow = await c.env.DB.prepare(
+    "SELECT user_id FROM agents WHERE pairing_token = ?",
   )
     .bind(token)
     .first<{ user_id: string }>();
-  if (!row) {
-    return c.json({ error: "Invalid pairing token" }, 401);
-  }
 
-  const userId = row.user_id;
+  let userId: string;
+  if (agentRow) {
+    userId = agentRow.user_id;
+  } else {
+    const row = await c.env.DB.prepare(
+      "SELECT user_id FROM pairing_tokens WHERE token = ? AND revoked_at IS NULL",
+    )
+      .bind(token)
+      .first<{ user_id: string }>();
+    if (!row) {
+      return c.json({ error: "Invalid pairing token" }, 401);
+    }
+    userId = row.user_id;
+  }
   const contentType = c.req.header("Content-Type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
     return c.json({ error: "Expected multipart/form-data" }, 400);
