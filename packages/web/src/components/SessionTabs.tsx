@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useAppState, useAppDispatch } from "../store";
 import { sessionsApi, channelsApi, agentsApi } from "../api";
 import { dlog } from "../debug-log";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 
 // ---------------------------------------------------------------------------
 // Session history — tracks per-channel usage order in localStorage
@@ -88,6 +89,7 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [editingId, setEditingId] = useState<string | null>(null);
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
   const [editValue, setEditValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const editRef = useRef<HTMLInputElement>(null);
@@ -267,7 +269,7 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
                   onChange={(e) => setEditValue(e.target.value)}
                   onBlur={commitRename}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing && !isIMEActive()) {
                       e.preventDefault();
                       commitRename();
                     }
@@ -275,6 +277,8 @@ export function SessionTabs({ channelId }: SessionTabsProps) {
                       setEditingId(null);
                     }
                   }}
+                  onCompositionStart={onCompositionStart}
+                  onCompositionEnd={onCompositionEnd}
                   className="px-2.5 py-1 text-caption rounded-t-md focus:outline-none"
                   style={{
                     background: "var(--bg-hover)",

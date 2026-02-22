@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useAppState, useAppDispatch } from "../store";
 import { agentsApi, channelsApi } from "../api";
 import { dlog } from "../debug-log";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 
 export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () => void; onNavigate?: () => void } = {}) {
   const state = useAppState();
@@ -9,6 +10,7 @@ export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () =>
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
   const [channelsExpanded, setChannelsExpanded] = useState(true);
 
   const handleCreate = async () => {
@@ -189,7 +191,9 @@ export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () =>
                   placeholder="Channel name"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && !isIMEActive() && handleCreate()}
+                  onCompositionStart={onCompositionStart}
+                  onCompositionEnd={onCompositionEnd}
                   className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
                   style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
                   autoFocus
@@ -199,7 +203,9 @@ export function Sidebar({ onOpenSettings, onNavigate }: { onOpenSettings?: () =>
                   placeholder="Description (optional)"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && !isIMEActive() && handleCreate()}
+                  onCompositionStart={onCompositionStart}
+                  onCompositionEnd={onCompositionEnd}
                   className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
                   style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
                 />

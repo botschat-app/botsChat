@@ -4,6 +4,7 @@ import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { SessionTabs } from "./SessionTabs";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
 import { E2eService } from "../e2e";
@@ -158,6 +159,7 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const isMobile = useIsMobile();
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
   const [input, setInput] = useState("");
   const [skillVersion, setSkillVersion] = useState(0); // bump to re-sort skills
   const [pendingImage, setPendingImage] = useState<{ file: File; preview: string } | null>(null);
@@ -902,11 +904,13 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isIMEActive()) {
                 e.preventDefault();
                 handleSend();
               }
             }}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             onPaste={handlePaste}
             placeholder={
               state.openclawConnected

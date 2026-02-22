@@ -13,7 +13,7 @@ import {
 import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
 import { BotsChatWSClient, type WSMessage } from "./ws";
-import { initPushNotifications, getPendingPushNav, clearPendingPushNav } from "./push";
+import { initPushNotifications, getPendingPushNav, clearPendingPushNav, notifyIfBackground } from "./push";
 import { setupForegroundDetection, sendFocusUpdate } from "./foreground";
 import { IconRail } from "./components/IconRail";
 import { Sidebar } from "./components/Sidebar";
@@ -602,6 +602,15 @@ export default function App() {
 
       // Log every incoming WS message
       dlog.wsIn("WS", `${msg.type}`, msg);
+
+      // macOS native notification for background messages
+      notifyIfBackground({
+        type: msg.type,
+        text: msg.text as string | undefined,
+        caption: msg.caption as string | undefined,
+        sessionKey: sessionKey,
+        agentName: msg.agentName as string | undefined,
+      });
 
       // Helper: extract base sessionKey (strip ":thread:*" suffix) for comparison
       const getBaseSessionKey = (sk: string | undefined): string | undefined => {

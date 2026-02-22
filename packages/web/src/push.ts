@@ -96,10 +96,95 @@ export async function clearE2eKeyFromSW(): Promise<void> {
   }
 }
 
+// ---- macOS native notification bridge ----
+
+declare global {
+  interface Window {
+    __BOTSCHAT_NATIVE__?: boolean;
+    __BOTSCHAT_PLATFORM__?: string;
+    __BOTSCHAT_NATIVE_NOTIFY__?: (payload: {
+      title: string;
+      body: string;
+      sessionKey?: string;
+    }) => void;
+    __BOTSCHAT_NATIVE_REQUEST_PERMISSION__?: () => void;
+  }
+}
+
+function isMacOSNative(): boolean {
+  return !!(window.__BOTSCHAT_NATIVE__ && window.__BOTSCHAT_PLATFORM__ === "macos");
+}
+
+async function initMacOSPush(): Promise<void> {
+  try {
+    window.__BOTSCHAT_NATIVE_REQUEST_PERMISSION__?.();
+    dlog.info("Push", "macOS native notification permission requested");
+  } catch (err) {
+    dlog.error("Push", "macOS notification init failed", err);
+  }
+}
+
+/**
+ * Show a native macOS notification when a message arrives via WS and
+ * the window is not focused. Call this from the WS message handler.
+ */
+export function notifyIfBackground(msg: {
+  type: string;
+  text?: string;
+  caption?: string;
+  sessionKey?: string;
+  agentName?: string;
+}): void {
+  if (!isMacOSNative()) return;
+  if (!document.hidden && document.hasFocus()) return;
+  if (!window.__BOTSCHAT_NATIVE_NOTIFY__) return;
+
+  let body = "";
+  const title = msg.agentName || "BotsChat";
+
+  if (msg.type === "agent.text" && msg.text) {
+    body = msg.text.length > 200 ? msg.text.slice(0, 200) + "…" : msg.text;
+  } else if (msg.type === "agent.media") {
+    body = msg.caption || "Sent a media file";
+  } else {
+    return;
+  }
+
+  window.__BOTSCHAT_NATIVE_NOTIFY__({ title, body, sessionKey: msg.sessionKey });
+}
+
+// ---- Service Worker message listener (notification click → navigation) ----
+
+function setupSWMessageListener(): void {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "push-nav" && event.data.sessionKey) {
+      dlog.info("Push", `SW postMessage push-nav: ${event.data.sessionKey}`);
+      firePushNav(event.data.sessionKey);
+    }
+  });
+
+  // Also check URL for push_session param (when SW opens a new window)
+  const params = new URLSearchParams(window.location.search);
+  const pushSession = params.get("push_session");
+  if (pushSession) {
+    dlog.info("Push", `URL push_session param: ${pushSession}`);
+    firePushNav(pushSession);
+    // Clean up the URL parameter
+    params.delete("push_session");
+    const clean = params.toString();
+    const newUrl = window.location.pathname + (clean ? "?" + clean : "") + window.location.hash;
+    window.history.replaceState({}, "", newUrl);
+  }
+}
+
 // ---- Push initialization ----
 
 export async function initPushNotifications(): Promise<void> {
   if (initialized) return;
+
+  // Listen for SW notification-click messages (must be before any early return)
+  setupSWMessageListener();
 
   // Sync E2E key so push notifications can be decrypted
   await syncE2eKeyToSW();
@@ -109,7 +194,9 @@ export async function initPushNotifications(): Promise<void> {
     syncE2eKeyToSW().catch(() => {});
   });
 
-  if (Capacitor.isNativePlatform()) {
+  if (isMacOSNative()) {
+    await initMacOSPush();
+  } else if (Capacitor.isNativePlatform()) {
     await initNativePush();
   } else {
     await initWebPush();

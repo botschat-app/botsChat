@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useAppState, useAppDispatch } from "../store";
 import { tasksApi, channelsApi } from "../api";
 import { dlog } from "../debug-log";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 
 function relativeTime(ts: number): string {
   const now = Date.now() / 1000;
@@ -17,6 +18,7 @@ export function CronSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const dispatch = useAppDispatch();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
 
   const handleSelect = (taskId: string) => {
     // Ensure activeView is "automations" so cron data loads correctly
@@ -93,7 +95,9 @@ export function CronSidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             placeholder="Automation name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreateTask()}
+            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && !isIMEActive() && handleCreateTask()}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             className="w-full px-2 py-1.5 text-caption text-[--text-sidebar] rounded-sm focus:outline-none placeholder:text-[--text-muted]"
             style={{ background: "var(--sidebar-hover)", border: "1px solid var(--sidebar-border)" }}
             autoFocus
