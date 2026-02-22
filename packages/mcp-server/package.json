@@ -1,0 +1,20 @@
+{
+  "name": "@botschat/mcp-server",
+  "version": "0.1.0",
+  "description": "BotsChat MCP Server — exposes chat history, agent discovery, and messaging tools for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "botschat-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
