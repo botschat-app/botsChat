@@ -29,7 +29,8 @@ const DC_GRACE_MS = 30_000;   // 30 s after WebSocket disconnect
  * - Use WebSocket Hibernation API so idle users cost zero compute
  *
  * Connection tagging (via serializeAttachment / deserializeAttachment):
- * - "openclaw" = the WebSocket from the OpenClaw plugin
+ * - "agent:<agentId>" = WebSocket from an agent plugin (v2, per-agent)
+ * - "openclaw" = legacy WebSocket from the OpenClaw plugin (backward compat)
  * - "browser:<sessionId>" = a browser client WebSocket
  */
 export class ConnectionDO implements DurableObject {
@@ -88,7 +89,8 @@ export class ConnectionDO implements DurableObject {
         }
       }
       const preVerified = url.searchParams.get("verified") === "1";
-      return this.handleOpenClawConnect(request, preVerified);
+      const agentId = url.searchParams.get("agentId");
+      return this.handleOpenClawConnect(request, preVerified, agentId);
     }
 
     // Route: /client/:sessionId — Browser client connects here
@@ -141,7 +143,7 @@ export class ConnectionDO implements DurableObject {
         return;
       }
 
-      if (tag === "openclaw") {
+      if (tag === "openclaw" || tag?.startsWith("agent:")) {
         await this.handleOpenClawMessage(ws, parsed);
       } else if (tag?.startsWith("browser:")) {
         await this.handleBrowserMessage(ws, parsed);
@@ -162,8 +164,7 @@ export class ConnectionDO implements DurableObject {
   /** Called when a WebSocket is closed. */
   async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
     const tag = this.getTag(ws);
-    if (tag === "openclaw") {
-      // OpenClaw disconnected — notify all browser clients
+    if (tag === "openclaw" || tag?.startsWith("agent:")) {
       this.broadcastToBrowsers(
         JSON.stringify({ type: "openclaw.disconnected" }),
       );
@@ -186,7 +187,7 @@ export class ConnectionDO implements DurableObject {
 
   // ---- Connection handlers ----
 
-  private handleOpenClawConnect(request: Request, preVerified = false): Response {
+  private handleOpenClawConnect(request: Request, preVerified = false, agentId?: string | null): Response {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
@@ -202,12 +203,14 @@ export class ConnectionDO implements DurableObject {
     }
     this.lastOpenClawAcceptedAt = now;
 
-    // Safety valve: if stale openclaw sockets accumulated (e.g. from
+    const wsTag = agentId ? "agent:" + agentId : "openclaw";
+
+    // Safety valve: if stale sockets with the same tag accumulated (e.g. from
     // rapid reconnects that authenticated but then lost their edge
     // connection), close them all before accepting a new one.
-    const existing = this.state.getWebSockets("openclaw");
+    const existing = this.state.getWebSockets(wsTag);
     if (existing.length > 3) {
-      console.warn(`[DO] Safety valve: ${existing.length} openclaw sockets, closing all`);
+      console.warn(`[DO] Safety valve: ${existing.length} ${wsTag} sockets, closing all`);
       for (const s of existing) {
         try { s.close(4009, "replaced"); } catch { /* dead */ }
       }
@@ -216,12 +219,12 @@ export class ConnectionDO implements DurableObject {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
-    this.state.acceptWebSocket(server, ["openclaw"]);
+    this.state.acceptWebSocket(server, [wsTag]);
 
     // If the API worker already verified the token against D1, mark as
     // pre-verified. The plugin still sends an auth message, which we'll
     // fast-track through without re-validating the token.
-    server.serializeAttachment({ authenticated: false, tag: "openclaw", preVerified });
+    server.serializeAttachment({ authenticated: false, tag: wsTag, agentId: agentId ?? null, preVerified });
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -270,11 +273,12 @@ export class ConnectionDO implements DurableObject {
       const isValid = attachment?.preVerified || await this.validatePairingToken(token);
 
       if (isValid) {
-        // Close ALL other openclaw sockets. Use custom code 4009 so
+        // Close other sockets with the SAME tag. Use custom code 4009 so
         // well-behaved plugins know they were replaced (not a crash)
         // and should NOT reconnect. The Worker-level rate limit (10s)
         // prevents the resulting close event from flooding the DO.
-        const existingSockets = this.state.getWebSockets("openclaw");
+        const wsTag = attachment?.tag ?? "openclaw";
+        const existingSockets = this.state.getWebSockets(wsTag);
         let closedCount = 0;
         for (const oldWs of existingSockets) {
           if (oldWs !== ws) {
@@ -625,7 +629,10 @@ export class ConnectionDO implements DurableObject {
 
   private handleStatus(): Response {
     const sockets = this.state.getWebSockets();
-    const openclawSocket = sockets.find((s) => this.getTag(s) === "openclaw");
+    const openclawSocket = sockets.find((s) => {
+      const t = this.getTag(s);
+      return t === "openclaw" || t?.startsWith("agent:");
+    });
     const browserCount = sockets.filter((s) =>
       this.getTag(s)?.startsWith("browser:"),
     ).length;
@@ -696,17 +703,34 @@ export class ConnectionDO implements DurableObject {
     return att?.tag ?? null;
   }
 
-  private getOpenClawSocket(): WebSocket | null {
-    const sockets = this.state.getWebSockets("openclaw");
-    // Return the LAST (newest) authenticated OpenClaw socket.
-    // After a reconnection there may briefly be multiple sockets
-    // before the stale cleanup in handleOpenClawMessage runs.
+  /** Get a specific agent's socket by agentId. */
+  private getAgentSocket(agentId: string): WebSocket | null {
+    const sockets = this.state.getWebSockets("agent:" + agentId);
     let newest: WebSocket | null = null;
     for (const s of sockets) {
       const att = s.deserializeAttachment() as { authenticated: boolean } | null;
       if (att?.authenticated) newest = s;
     }
     return newest ?? sockets[sockets.length - 1] ?? null;
+  }
+
+  /** Get any connected agent socket (new agent:xxx or legacy openclaw). */
+  private getAnyAgentSocket(): WebSocket | null {
+    const allSockets = this.state.getWebSockets();
+    for (const s of allSockets) {
+      const att = s.deserializeAttachment() as { authenticated: boolean; tag?: string } | null;
+      if (att?.authenticated && att?.tag?.startsWith("agent:")) return s;
+    }
+    const legacySockets = this.state.getWebSockets("openclaw");
+    for (const s of legacySockets) {
+      const att = s.deserializeAttachment() as { authenticated: boolean } | null;
+      if (att?.authenticated) return s;
+    }
+    return legacySockets[legacySockets.length - 1] ?? null;
+  }
+
+  private getOpenClawSocket(): WebSocket | null {
+    return this.getAnyAgentSocket();
   }
 
   private broadcastToBrowsers(message: string): void {
