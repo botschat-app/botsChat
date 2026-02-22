@@ -354,6 +354,9 @@ export class ConnectionDO implements DurableObject {
       // Bitmask: bit 0 = text encrypted, bit 1 = media encrypted
       const encryptedBits = (msg.encrypted ? 1 : 0) | (msg.mediaEncrypted ? 2 : 0);
 
+      // Extract agentId from the sending WebSocket's attachment
+      const wsAtt = ws.deserializeAttachment() as { agentId?: string } | null;
+
       await this.persistMessage({
         id: msg.messageId as string | undefined,
         sender: "agent",
@@ -363,6 +366,7 @@ export class ConnectionDO implements DurableObject {
         mediaUrl: persistedMediaUrl,
         a2ui: msg.jsonl as string | undefined,
         encrypted: encryptedBits,
+        senderAgentId: (msg.agentId as string | undefined) ?? wsAtt?.agentId ?? undefined,
       });
     }
 
@@ -524,6 +528,7 @@ export class ConnectionDO implements DurableObject {
         type: msg.type,
         sessionKey: msg.sessionKey,
         messageId: msg.messageId,
+        targetAgentId: msg.targetAgentId,
         hasMedia: !!msg.mediaUrl,
       }));
       await this.persistMessage({
@@ -533,14 +538,34 @@ export class ConnectionDO implements DurableObject {
         text: (msg.text ?? "") as string,
         mediaUrl: msg.mediaUrl as string | undefined,
         encrypted: msg.encrypted ? 1 : 0,
+        targetAgentId: msg.targetAgentId as string | undefined,
       });
     }
 
-    // Forward user messages to OpenClaw
-    const openclawWs = this.getOpenClawSocket();
-    if (openclawWs) {
-      // If this is a thread message, look up the parent message and attach it
-      // so the plugin can inject the thread-origin context into the AI conversation.
+    // Route user message to the target agent
+    const targetAgentId = msg.targetAgentId as string | undefined;
+    let targetWs: WebSocket | null = null;
+
+    if (targetAgentId) {
+      targetWs = this.getAgentSocket(targetAgentId);
+    }
+    if (!targetWs) {
+      // No explicit target or target not found — try channel's default agent
+      const sessionKey = msg.sessionKey as string | undefined;
+      if (sessionKey) {
+        const channelDefault = await this.resolveDefaultAgentId(sessionKey);
+        if (channelDefault) {
+          targetWs = this.getAgentSocket(channelDefault);
+        }
+      }
+    }
+    if (!targetWs) {
+      // Final fallback: any connected agent (backward compat)
+      targetWs = this.getAnyAgentSocket();
+    }
+
+    if (targetWs) {
+      // Enrich thread messages with parent context
       const sessionKey = msg.sessionKey as string | undefined;
       const threadMatch = sessionKey?.match(/:thread:(.+)$/);
       let enrichedMsg = msg;
@@ -560,18 +585,17 @@ export class ConnectionDO implements DurableObject {
               parentSender: parentRow.sender as string,
               parentEncrypted: (parentRow.encrypted ?? 0) as number,
             };
-            console.log(`[DO] Attached parent message for thread: parentId=${parentId}, sender=${parentRow.sender}, encrypted=${parentRow.encrypted}`);
           }
         } catch (err) {
-          console.error(`[DO] Failed to fetch parent message for thread ${parentId}:`, err);
+          console.error(`[DO] Failed to fetch parent message for thread:`, err);
         }
       }
-      openclawWs.send(JSON.stringify(enrichedMsg));
+      targetWs.send(JSON.stringify(enrichedMsg));
     } else {
       ws.send(
         JSON.stringify({
           type: "error",
-          message: "OpenClaw is not connected. Please check your OpenClaw instance.",
+          message: "No agent is currently connected. Please check your agent instances.",
         }),
       );
     }
@@ -1061,6 +1085,8 @@ export class ConnectionDO implements DurableObject {
     mediaUrl?: string;
     a2ui?: string;
     encrypted?: number;
+    senderAgentId?: string;
+    targetAgentId?: string;
   }): Promise<void> {
     try {
       const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
@@ -1075,10 +1101,10 @@ export class ConnectionDO implements DurableObject {
       }
 
       await this.env.DB.prepare(
-        `INSERT INTO messages (id, user_id, session_key, thread_id, sender, text, media_url, a2ui, encrypted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages (id, user_id, session_key, thread_id, sender, text, media_url, a2ui, encrypted, sender_agent_id, target_agent_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-        .bind(id, userId, opts.sessionKey, threadId ?? null, opts.sender, opts.text, opts.mediaUrl ?? null, opts.a2ui ?? null, encrypted)
+        .bind(id, userId, opts.sessionKey, threadId ?? null, opts.sender, opts.text, opts.mediaUrl ?? null, opts.a2ui ?? null, encrypted, opts.senderAgentId ?? null, opts.targetAgentId ?? null)
         .run();
     } catch (err) {
       console.error("Failed to persist message:", err);
@@ -1383,6 +1409,37 @@ export class ConnectionDO implements DurableObject {
 
   /**
    * Resolve a "@channelName" session key to a real adhoc task session key.
+   * Resolve the default agent ID for a given session key.
+   * Looks up the channel from the session key pattern and returns its default_agent_id.
+   */
+  private async resolveDefaultAgentId(sessionKey: string): Promise<string | null> {
+    try {
+      const userId = await this.state.storage.get<string>("userId");
+      if (!userId) return null;
+
+      // Try to find channel by matching session_key in sessions or tasks table
+      const session = await this.env.DB.prepare(
+        "SELECT channel_id FROM sessions WHERE session_key = ? AND user_id = ? LIMIT 1",
+      )
+        .bind(sessionKey.replace(/:thread:.+$/, ""), userId)
+        .first<{ channel_id: string }>();
+
+      const channelId = session?.channel_id;
+      if (!channelId) return null;
+
+      const channel = await this.env.DB.prepare(
+        "SELECT default_agent_id FROM channels WHERE id = ? LIMIT 1",
+      )
+        .bind(channelId)
+        .first<{ default_agent_id: string | null }>();
+
+      return channel?.default_agent_id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * - "@default" → first channel (by created_at ASC)
    * - "@SomeName" → channel matched by name (case-insensitive)
    * Returns the original sessionKey if it doesn't start with "@".
