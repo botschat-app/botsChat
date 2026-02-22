@@ -337,3 +337,61 @@ export const setupApi = {
       "/setup/cloud-url",
     ),
 };
+
+// ---- v2 Agents (multi-agent architecture) ----
+export type AgentV2 = {
+  id: string;
+  name: string;
+  type: "openclaw" | "cursor_cli" | "cursor_cloud" | "claude_code" | "mock";
+  role: string;
+  systemPrompt: string;
+  skills: Array<{ name: string; description: string }>;
+  capabilities: string[];
+  status: "connected" | "disconnected";
+  lastConnectedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export const agentsV2Api = {
+  list: () => request<{ agents: AgentV2[] }>("GET", "/v2/agents"),
+  create: (data: { name: string; type: string; role?: string; systemPrompt?: string; skills?: Array<{ name: string; description: string }>; pairingToken?: string; apiKey?: string; config?: Record<string, unknown> }) =>
+    request<AgentV2>("POST", "/v2/agents", data),
+  update: (id: string, data: { name?: string; role?: string; systemPrompt?: string; skills?: Array<{ name: string; description: string }>; config?: Record<string, unknown> }) =>
+    request<AgentV2>("PATCH", `/v2/agents/${id}`, data),
+  delete: (id: string) => request<{ ok: boolean }>("DELETE", `/v2/agents/${id}`),
+};
+
+// ---- v2 History Query ----
+export type MessageV2 = {
+  id: string;
+  sender: "user" | "agent";
+  senderAgentId?: string;
+  senderAgentName?: string;
+  targetAgentId?: string;
+  text: string;
+  mediaUrl?: string;
+  encrypted: boolean;
+  timestamp: number;
+  traces?: Array<{
+    verboseLevel: number;
+    traceType: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }>;
+};
+
+export const historyV2Api = {
+  query: (params: { sessionKey: string; verboseLevel?: number; limit?: number; agentIdFilter?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("sessionKey", params.sessionKey);
+    if (params.verboseLevel) qs.set("verboseLevel", String(params.verboseLevel));
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.agentIdFilter) qs.set("agentIdFilter", params.agentIdFilter);
+    return request<{ messages: MessageV2[]; hasMore: boolean }>("GET", `/v2/messages/query?${qs.toString()}`);
+  },
+  traces: (messageId: string, verboseLevel?: number) => {
+    const qs = verboseLevel ? `?verboseLevel=${verboseLevel}` : "";
+    return request<{ traces: Array<{ id: string; verboseLevel: number; traceType: string; content: string; metadata?: Record<string, unknown>; agentId: string; timestamp: number }> }>("GET", `/v2/messages/traces/${messageId}${qs}`);
+  },
+};

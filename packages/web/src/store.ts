@@ -1,7 +1,7 @@
 /** Minimal reactive store using React context + useState. */
 
 import { createContext, useContext } from "react";
-import type { Agent as ApiAgent, Channel, Task, TaskWithChannel, Job, ModelInfo, Session } from "./api";
+import type { Agent as ApiAgent, AgentV2, Channel, Task, TaskWithChannel, Job, ModelInfo, Session } from "./api";
 
 export type ChatMessage = {
   id: string;
@@ -19,6 +19,9 @@ export type ChatMessage = {
   encrypted?: boolean | number;
   /** Whether the media binary was E2E encrypted (derived from sender + encrypted flag) */
   mediaEncrypted?: boolean;
+  senderAgentId?: string;
+  senderAgentName?: string;
+  targetAgentId?: string;
 };
 
 export type ActiveView = "messages" | "automations";
@@ -42,6 +45,10 @@ export type AppState = {
   activeThreadId: string | null;
   threadReplyCounts: Record<string, number>;
   openclawConnected: boolean;
+  /** Per-agent connection status (v2 multi-agent). */
+  agentConnections: Record<string, boolean>;
+  /** v2 agent list with detailed info (type, role, skills, capabilities). */
+  v2Agents: AgentV2[];
   /** Per-session model override (set via /model or dropdown). null = using defaultModel. */
   sessionModel: string | null;
   wsConnected: boolean;
@@ -78,6 +85,8 @@ export const initialState: AppState = {
   activeThreadId: null,
   threadReplyCounts: {},
   openclawConnected: false,
+  agentConnections: {},
+  v2Agents: [],
   sessionModel: null,
   wsConnected: false,
   models: [],
@@ -131,6 +140,8 @@ export type AppAction =
   | { type: "ADD_CRON_JOB"; job: Job }
   | { type: "UPDATE_CRON_JOB"; job: Job }
   | { type: "APPEND_JOB_OUTPUT"; jobId: string; text: string }
+  | { type: "SET_V2_AGENTS"; agents: AgentV2[] }
+  | { type: "SET_AGENT_CONNECTION"; agentId: string; connected: boolean }
   | { type: "LOGOUT" };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -485,6 +496,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         cronJobs: updateSummary(state.cronJobs),
       };
     }
+    case "SET_V2_AGENTS":
+      return {
+        ...state,
+        v2Agents: action.agents,
+        agentConnections: Object.fromEntries(
+          action.agents.map((a) => [a.id, a.status === "connected"]),
+        ),
+      };
+    case "SET_AGENT_CONNECTION":
+      return {
+        ...state,
+        agentConnections: {
+          ...state.agentConnections,
+          [action.agentId]: action.connected,
+        },
+      };
     case "LOGOUT":
       return { ...initialState };
     default:
