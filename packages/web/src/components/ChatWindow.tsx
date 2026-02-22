@@ -986,9 +986,11 @@ function MessageRow({
   onStop?: () => void;
 }) {
   const state = useAppState();
-  const senderLabel = msg.sender === "user" ? "You" : "OpenClaw Agent";
+  const agentName = msg.senderAgentName ?? "Agent";
+  const senderLabel = msg.sender === "user" ? "You" : agentName;
+  const AGENT_COLORS: Record<string, string> = { openclaw: "#2BAC76", cursor_cli: "#3B82F6", cursor_cloud: "#6366F1", claude_code: "#F59E0B" };
   const avatarColor = msg.sender === "user" ? "#9B59B6" : "#2BAC76";
-  const initial = msg.sender === "user" ? "U" : "A";
+  const initial = msg.sender === "user" ? "U" : agentName[0]?.toUpperCase() ?? "A";
   const replyCount = state.threadReplyCounts[msg.id] ?? 0;
 
   // Long-press context menu for mobile

@@ -10,7 +10,7 @@ import {
   type AppState,
   type ActiveView,
 } from "./store";
-import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
+import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo, type AgentV2 } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
 import { BotsChatWSClient, type WSMessage } from "./ws";
 import { initPushNotifications, getPendingPushNav, clearPendingPushNav } from "./push";
@@ -633,6 +633,12 @@ export default function App() {
           if (Array.isArray(msg.models) && msg.models.length > 0) {
             dispatch({ type: "SET_MODELS", models: msg.models as ModelInfo[] });
           }
+          const data = msg as unknown as { connectedAgents?: { id: string }[] };
+          if (Array.isArray(data.connectedAgents)) {
+            for (const agent of data.connectedAgents) {
+              dispatch({ type: "SET_AGENT_CONNECTION", agentId: agent.id, connected: true });
+            }
+          }
           break;
 
         case "openclaw.disconnected":
@@ -692,6 +698,7 @@ export default function App() {
           // Skip messages for sessions we're not viewing — they'll be loaded
           // from the server when the user navigates to that session.
           if (!isCurrentSession(sessionKey)) break;
+          const agentId = (msg as { agentId?: string }).agentId;
           const chatMsg: ChatMessage = {
             id: randomUUID(),
             sender: "agent",
@@ -699,6 +706,10 @@ export default function App() {
             timestamp: Date.now(),
             threadId,
             encrypted: !!msg.encrypted,
+            ...(agentId ? {
+              senderAgentId: agentId,
+              senderAgentName: stateRef.current.v2Agents.find((a) => a.id === agentId)?.name ?? agentId,
+            } : {}),
           };
           if (threadId && sessionKey) {
             dispatch({ type: "ADD_THREAD_MESSAGE", message: chatMsg });
@@ -844,6 +855,14 @@ export default function App() {
                 dispatch({ type: "SET_TASKS", tasks });
               });
             }
+          }
+          break;
+        }
+
+        case "auth.ok": {
+          const authData = msg as unknown as { availableAgents?: AgentV2[] };
+          if (Array.isArray(authData.availableAgents)) {
+            dispatch({ type: "SET_V2_AGENTS", agents: authData.availableAgents });
           }
           break;
         }

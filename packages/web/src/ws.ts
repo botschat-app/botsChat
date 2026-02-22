@@ -127,6 +127,7 @@ export class BotsChatWSClient {
           this.backoffMs = 1000;
           this._connected = true;
           this.opts.onStatusChange(true);
+          this.opts.onMessage(msg);
         } else {
           this.opts.onMessage(msg);
         }
