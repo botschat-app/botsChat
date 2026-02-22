@@ -54,6 +54,9 @@ export class ConnectionDO implements DurableObject {
   /** Timestamp of last accepted OpenClaw WebSocket (in-memory, no storage write). */
   private lastOpenClawAcceptedAt = 0;
 
+  /** Pending agent.request delegations — maps requestId to originator info. */
+  private pendingRequests = new Map<string, { fromAgentId: string; sessionKey: string; depth: number; createdAt: number }>();
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -421,11 +424,44 @@ export class ConnectionDO implements DurableObject {
       await this.handleJobUpdate(msg);
     }
 
+    // Handle agent.request — Agent-to-Agent delegation
+    if (msg.type === "agent.request") {
+      await this.handleAgentRequest(ws, msg);
+      return;
+    }
+
+    // Handle agent.trace — persist verbose execution traces (lv2/lv3)
+    if (msg.type === "agent.trace") {
+      await this.handleAgentTrace(msg);
+      return;
+    }
+
     // Forward all messages to browser clients (strip notifyPreview — plaintext
     // must not be relayed to browser WebSockets; browsers decrypt locally)
     if (msg.type === "agent.text") {
       console.log(`[DO] Forwarding agent.text to browsers: encrypted=${msg.encrypted}, messageId=${msg.messageId}, textLen=${typeof msg.text === "string" ? msg.text.length : "?"}`);
     }
+
+    const wsAttForReply = ws.deserializeAttachment() as { agentId?: string } | null;
+
+    // Check if this agent.text is a response to a pending agent.request
+    if ((msg.type === "agent.text" || msg.type === "agent.stream.end") && msg.requestId) {
+      const pending = this.pendingRequests.get(msg.requestId as string);
+      if (pending) {
+        const originSocket = this.getAgentSocket(pending.fromAgentId);
+        if (originSocket) {
+          originSocket.send(JSON.stringify({
+            type: "agent.response",
+            requestId: msg.requestId,
+            fromAgentId: (msg.agentId as string) ?? wsAttForReply?.agentId ?? null,
+            text: (msg.text ?? "") as string,
+            sessionKey: (msg.sessionKey ?? "") as string,
+          }));
+        }
+        this.pendingRequests.delete(msg.requestId as string);
+      }
+    }
+
     const { notifyPreview: _stripped, ...msgForBrowser } = msg;
     this.broadcastToBrowsers(JSON.stringify(msgForBrowser));
 
@@ -473,11 +509,31 @@ export class ConnectionDO implements DurableObject {
       }
 
       ws.serializeAttachment({ ...attachment, authenticated: true });
-      // Include userId so the browser can derive the E2E key
       const doUserId2 = doUserId ?? payload.sub;
-      ws.send(JSON.stringify({ type: "auth.ok", userId: doUserId2 }));
 
-      // Send current OpenClaw connection status + cached models
+      // Fetch available agents from D1 for the auth.ok response
+      let availableAgents: Array<{ id: string; name: string; type: string; role: string; capabilities: string[]; status: string }> = [];
+      try {
+        const { results } = await this.env.DB.prepare(
+          "SELECT id, name, type, role, capabilities, status FROM agents WHERE user_id = ? ORDER BY created_at ASC",
+        )
+          .bind(doUserId2)
+          .all<{ id: string; name: string; type: string; role: string; capabilities: string; status: string }>();
+        availableAgents = (results ?? []).map((r) => ({
+          id: r.id,
+          name: r.name,
+          type: r.type,
+          role: r.role,
+          capabilities: JSON.parse(r.capabilities || "[]"),
+          status: r.status,
+        }));
+      } catch (err) {
+        console.error("[DO] Failed to fetch agents for auth.ok:", err);
+      }
+
+      ws.send(JSON.stringify({ type: "auth.ok", userId: doUserId2, availableAgents }));
+
+      // Send current connection status + cached models
       await this.ensureCachedModels();
       const openclawConnected = this.getOpenClawSocket() !== null;
       ws.send(
@@ -486,6 +542,7 @@ export class ConnectionDO implements DurableObject {
           openclawConnected,
           defaultModel: this.defaultModel,
           models: this.cachedModels,
+          connectedAgents: availableAgents.filter((a) => a.status === "connected"),
         }),
       );
       return;
@@ -755,6 +812,128 @@ export class ConnectionDO implements DurableObject {
 
   private getOpenClawSocket(): WebSocket | null {
     return this.getAnyAgentSocket();
+  }
+
+  // ---- Agent-to-Agent delegation ----
+
+  private async handleAgentRequest(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    const MAX_DEPTH = 5;
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const depth = (msg.depth as number) ?? 0;
+    const requestId = msg.requestId as string;
+    const targetAgentId = msg.targetAgentId as string;
+    const fromAtt = ws.deserializeAttachment() as { agentId?: string } | null;
+    const fromAgentId = (msg.agentId as string) ?? fromAtt?.agentId ?? "unknown";
+
+    if (depth >= MAX_DEPTH) {
+      const originSocket = this.getAgentSocket(fromAgentId);
+      if (originSocket) {
+        originSocket.send(JSON.stringify({
+          type: "agent.response",
+          requestId,
+          fromAgentId: targetAgentId,
+          error: "Maximum delegation depth exceeded",
+          sessionKey: msg.sessionKey,
+        }));
+      }
+      return;
+    }
+
+    const targetSocket = this.getAgentSocket(targetAgentId);
+    if (!targetSocket) {
+      // Target agent offline — notify originator and broadcast system message
+      const originSocket = this.getAgentSocket(fromAgentId);
+      if (originSocket) {
+        originSocket.send(JSON.stringify({
+          type: "agent.response",
+          requestId,
+          fromAgentId: targetAgentId,
+          error: `Agent ${targetAgentId} is currently offline`,
+          sessionKey: msg.sessionKey,
+        }));
+      }
+      this.broadcastToBrowsers(JSON.stringify({
+        type: "system.message",
+        text: `Agent delegation failed: target agent is offline`,
+        sessionKey: msg.sessionKey,
+      }));
+      return;
+    }
+
+    // Track the pending request for response routing
+    this.pendingRequests.set(requestId, {
+      fromAgentId,
+      sessionKey: msg.sessionKey as string,
+      depth,
+      createdAt: Date.now(),
+    });
+
+    // Clean up expired pending requests
+    const now = Date.now();
+    for (const [rid, pr] of this.pendingRequests) {
+      if (now - pr.createdAt > TIMEOUT_MS) {
+        this.pendingRequests.delete(rid);
+      }
+    }
+
+    // Persist the delegation message to D1 (visible as agent-to-agent in chat)
+    await this.persistMessage({
+      sender: "agent",
+      sessionKey: msg.sessionKey as string,
+      text: (msg.text ?? "") as string,
+      senderAgentId: fromAgentId,
+      targetAgentId,
+    });
+
+    // Forward to target agent as a user.message (agents don't need to know it's a delegation)
+    targetSocket.send(JSON.stringify({
+      type: "user.message",
+      sessionKey: msg.sessionKey,
+      text: msg.text,
+      userId: fromAgentId,
+      messageId: requestId,
+      targetAgentId,
+      context: msg.context,
+      depth: depth + 1,
+    }));
+
+    // Also broadcast to browser so user can see the delegation
+    this.broadcastToBrowsers(JSON.stringify({
+      type: "agent.text",
+      agentId: fromAgentId,
+      sessionKey: msg.sessionKey,
+      text: msg.text,
+      targetAgentId,
+      isDelegation: true,
+    }));
+  }
+
+  // ---- Verbose trace persistence ----
+
+  private async handleAgentTrace(msg: Record<string, unknown>): Promise<void> {
+    try {
+      const userId = (await this.state.storage.get<string>("userId")) ?? "unknown";
+      const id = generateIdUtil("mt_");
+      await this.env.DB.prepare(
+        `INSERT INTO message_traces (id, message_id, user_id, session_key, agent_id, verbose_level, trace_type, content, metadata_json, encrypted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          id,
+          (msg.messageId ?? "") as string,
+          userId,
+          (msg.sessionKey ?? "") as string,
+          (msg.agentId ?? "") as string,
+          (msg.verboseLevel ?? 2) as number,
+          (msg.traceType ?? "thinking") as string,
+          (msg.content ?? "") as string,
+          JSON.stringify(msg.metadata ?? {}),
+          msg.encrypted ? 1 : 0,
+        )
+        .run();
+    } catch (err) {
+      console.error("[DO] Failed to persist agent trace:", err);
+    }
   }
 
   private broadcastToBrowsers(message: string): void {
