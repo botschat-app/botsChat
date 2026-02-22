@@ -28,6 +28,7 @@ export async function createChat(): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(AGENT_BIN, ["create-chat"], {
       env: { ...process.env, PATH: `${RG_PATH}:${process.env.PATH}` },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
     proc.stdout.on("data", (d) => { output += d.toString(); });
@@ -62,10 +63,17 @@ export function runAgent(opts: RunOptions): { proc: ChildProcess; abort: () => v
   delete env.VSCODE_IPC_HOOK;
   delete env.CURSOR_EXTENSION_HOST_ROLE;
 
+  console.log(`[cli] Spawning: ${AGENT_BIN} ${args.join(" ")}`);
+  console.log(`[cli] CWD: ${opts.workspace ?? process.cwd()}`);
+  console.log(`[cli] CURSOR_AGENT=${env.CURSOR_AGENT ?? "unset"}, VSCODE_IPC_HOOK=${env.VSCODE_IPC_HOOK ? "SET" : "unset"}`);
+
   const proc = spawn(AGENT_BIN, args, {
     env,
     cwd: opts.workspace ?? process.cwd(),
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  console.log(`[cli] Spawned PID: ${proc.pid}`);
 
   let streamStarted = false;
   let accumulatedText = "";
@@ -98,10 +106,12 @@ export function runAgent(opts: RunOptions): { proc: ChildProcess; abort: () => v
     }
   });
 
+  proc.stdout.on("end", () => { console.log("[cli] stdout ended"); });
   proc.stderr.on("data", (data) => {
     const text = data.toString().trim();
     if (text) console.error("[cli] stderr:", text);
   });
+  proc.stderr.on("end", () => { console.log("[cli] stderr ended"); });
 
   proc.on("close", (code) => {
     // Process any remaining buffered line
