@@ -29,6 +29,7 @@ const BOTSCHAT_URL = process.env.BOTSCHAT_URL ?? "http://localhost:8788";
 const BOTSCHAT_TOKEN = process.env.BOTSCHAT_TOKEN ?? "";
 const BOTSCHAT_AGENT_ID = process.env.BOTSCHAT_AGENT_ID ?? "";
 const CURSOR_WORKSPACE = process.env.CURSOR_WORKSPACE ?? process.cwd();
+const MOCK_MODE = process.env.MOCK_MODE === "1" || process.env.MOCK_MODE === "true";
 
 if (!BOTSCHAT_TOKEN) {
   console.error("Error: BOTSCHAT_TOKEN is required");
@@ -75,6 +76,33 @@ async function handleUserMessage(msg: Record<string, unknown>) {
   if (!text?.trim()) return;
 
   console.log(`[bridge] Received message: sessionKey=${sessionKey}, text=${text.substring(0, 80)}...`);
+
+  // Mock mode: echo back a simulated response without invoking the real CLI
+  if (MOCK_MODE) {
+    const runId = randomUUID().slice(0, 8);
+    wsClient.sendJson({ type: "agent.stream.start", agentId: BOTSCHAT_AGENT_ID, sessionKey, runId });
+
+    const mockReply = `[Cursor Dev mock] Received your message: "${text.substring(0, 100)}"\n\nI'm running in mock mode. In production, I would use Cursor Agent CLI to process this request in workspace: ${CURSOR_WORKSPACE}`;
+    const words = mockReply.split(" ");
+    let accumulated = "";
+    for (let i = 0; i < words.length; i++) {
+      accumulated += (i > 0 ? " " : "") + words[i];
+      wsClient.sendJson({ type: "agent.stream.chunk", agentId: BOTSCHAT_AGENT_ID, sessionKey, runId, text: accumulated });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    wsClient.sendJson({ type: "agent.text", agentId: BOTSCHAT_AGENT_ID, sessionKey, text: mockReply, messageId: randomUUID() });
+    wsClient.sendJson({ type: "agent.stream.end", agentId: BOTSCHAT_AGENT_ID, sessionKey, runId });
+
+    // Send a mock trace (lv2 thinking)
+    wsClient.sendJson({
+      type: "agent.trace", agentId: BOTSCHAT_AGENT_ID, sessionKey, messageId,
+      verboseLevel: 2, traceType: "thinking",
+      content: `Mock thinking: analyzed user request "${text.substring(0, 50)}..." and determined response.`,
+    });
+    console.log(`[bridge] Mock response sent for: ${text.substring(0, 40)}...`);
+    return;
+  }
 
   // Abort any existing run for this session
   const existingAbort = activeRuns.get(sessionKey);
