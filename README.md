@@ -8,6 +8,14 @@ A self-hosted, **end-to-end encrypted** chat interface for [OpenClaw](https://gi
 
 BotsChat gives you a modern, Slack-like web UI to interact with your OpenClaw agents — organize conversations into **Channels**, schedule **Background Tasks**, and monitor **Job** executions. With **E2E encryption**, your chat messages, cron prompts, and job summaries are encrypted on your device before they ever leave — the server only sees ciphertext it cannot decrypt. Your API keys and data never leave your machine.
 
+<div align="center">
+
+[![Watch the video](https://img.youtube.com/vi/_ifqYhoV7Jk/maxresdefault.jpg)](https://www.youtube.com/watch?v=_ifqYhoV7Jk)
+
+*▶ Watch the BotsChat Introduction Video*
+
+</div>
+
 ## Key Features
 
 ### Structured Conversation Management
