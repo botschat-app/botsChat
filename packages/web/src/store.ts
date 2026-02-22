@@ -19,6 +19,15 @@ export type ChatMessage = {
   encrypted?: boolean | number;
   /** Whether the media binary was E2E encrypted (derived from sender + encrypted flag) */
   mediaEncrypted?: boolean;
+  activities?: ActivityItem[];
+};
+
+export type ActivityItem = {
+  kind: "reasoning" | "tool_start" | "tool_end";
+  text?: string;
+  toolName?: string;
+  durationMs?: number;
+  timestamp: number;
 };
 
 export type ActiveView = "messages" | "automations";
@@ -126,6 +135,7 @@ export type AppAction =
   | { type: "STREAM_START"; runId: string; sessionKey: string; threadId?: string }
   | { type: "STREAM_CHUNK"; runId: string; sessionKey: string; text: string }
   | { type: "STREAM_END"; runId: string }
+  | { type: "STREAM_ACTIVITY"; runId: string; sessionKey: string; activity: ActivityItem }
   | { type: "SET_CRON_JOBS"; cronJobs: Job[] }
   | { type: "SELECT_CRON_JOB"; jobId: string | null; sessionKey?: string | null }
   | { type: "ADD_CRON_JOB"; job: Job }
@@ -239,20 +249,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           streamingSessionKey: null,
           messages: [
             ...state.messages.slice(0, -1),
-            { ...action.message, isStreaming: false },
+            { ...action.message, isStreaming: false, activities: lastMsg.activities },
           ],
         };
       }
       return { ...state, messages: [...state.messages, action.message] };
     }
-    case "SET_MESSAGES":
+    case "SET_MESSAGES": {
+      let msgs = action.messages;
+      if (state.streamingRunId) {
+        const streamMsg = state.messages.find((m) => m.id === `stream_${state.streamingRunId}`);
+        if (streamMsg) {
+          msgs = [...msgs, streamMsg];
+        }
+      }
       return {
         ...state,
-        messages: action.messages,
+        messages: msgs,
         ...(action.replyCounts
           ? { threadReplyCounts: { ...state.threadReplyCounts, ...action.replyCounts } }
           : {}),
       };
+    }
     case "OPEN_THREAD":
       return {
         ...state,
@@ -281,7 +299,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         if (action.message.sender === "agent" && lastMsg?.isStreaming) {
           newThreadMessages = [
             ...state.threadMessages.slice(0, -1),
-            { ...action.message, isStreaming: false },
+            { ...action.message, isStreaming: false, activities: lastMsg.activities },
           ];
           clearStreaming = { streamingRunId: null, streamingSessionKey: null, streamingThreadId: null };
         } else {
@@ -383,6 +401,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // (agent.text can arrive before stream.end); handle gracefully.
       if (state.streamingRunId && state.streamingRunId !== action.runId) return state;
       return { ...state, streamingRunId: null, streamingSessionKey: null, streamingThreadId: null };
+    }
+    case "STREAM_ACTIVITY": {
+      const actStreamId = state.streamingRunId
+        ? `stream_${state.streamingRunId}`
+        : null;
+
+      const updateActivities = (msgs: ChatMessage[]): ChatMessage[] =>
+        msgs.map((m) => {
+          const isTarget = actStreamId ? m.id === actStreamId : m.isStreaming;
+          if (!isTarget) return m;
+
+          const existing = m.activities ?? [];
+          if (action.activity.kind === "reasoning") {
+            if (existing.length > 0 && existing[existing.length - 1].kind === "reasoning") {
+              return { ...m, activities: [...existing.slice(0, -1), action.activity] };
+            }
+            return { ...m, activities: [...existing, action.activity] };
+          }
+          return { ...m, activities: [...existing, action.activity] };
+        });
+
+      if (state.streamingThreadId) {
+        return { ...state, threadMessages: updateActivities(state.threadMessages) };
+      }
+      return { ...state, messages: updateActivities(state.messages) };
     }
     case "SET_CRON_TASKS":
       return { ...state, cronTasks: action.cronTasks };

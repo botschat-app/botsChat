@@ -68,8 +68,21 @@ export type CloudOutbound =
       sessionKey: string;
       runId: string;
       text: string;
+      encrypted?: boolean;
+      chunkId?: string;
     }
   | { type: "agent.stream.end"; sessionKey: string; runId: string }
+  | {
+      type: "agent.activity";
+      sessionKey: string;
+      runId: string;
+      kind: "reasoning" | "tool_start" | "tool_end";
+      text?: string;
+      toolName?: string;
+      durationMs?: number;
+      encrypted?: boolean;
+      activityId?: string;
+    }
   | {
       type: "agent.a2ui";
       sessionKey: string;

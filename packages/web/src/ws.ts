@@ -97,7 +97,27 @@ export class BotsChatWSClient {
                msg.decryptionError = true;
            }
         }
-        
+
+        // Decrypt agent.stream.chunk (E2E streaming support)
+        if (msg.type === "agent.stream.chunk" && msg.encrypted && msg.chunkId && E2eService.hasKey()) {
+          try {
+            msg.text = await E2eService.decrypt(msg.text as string, msg.chunkId as string);
+            msg.encrypted = false;
+          } catch (err) {
+            dlog.warn("E2E", "Stream chunk decryption failed", err);
+          }
+        }
+
+        // Decrypt agent.activity
+        if (msg.type === "agent.activity" && msg.encrypted && msg.activityId && E2eService.hasKey()) {
+          try {
+            msg.text = await E2eService.decrypt(msg.text as string, msg.activityId as string);
+            msg.encrypted = false;
+          } catch (err) {
+            dlog.warn("E2E", "Activity decryption failed", err);
+          }
+        }
+
         // Handle Task Scan Results (array items)
         if (msg.type === "task.scan.result" && Array.isArray(msg.tasks) && E2eService.hasKey()) {
             for (const t of msg.tasks) {

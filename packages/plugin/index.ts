@@ -1,5 +1,5 @@
 import { botschatPlugin } from "./src/channel.js";
-import { setBotsChatRuntime } from "./src/runtime.js";
+import { setBotsChatRuntime, setBotsChatApi } from "./src/runtime.js";
 
 // OpenClaw Plugin Definition
 // This is the entry point loaded by OpenClaw's plugin system.
@@ -12,8 +12,10 @@ const plugin = {
   register(api: {
     runtime: unknown;
     registerChannel: (reg: { plugin: typeof botschatPlugin }) => void;
+    registerHook?: (events: string | string[], handler: (...args: any[]) => any, opts?: any) => void;
   }) {
     setBotsChatRuntime(api.runtime);
+    setBotsChatApi(api);
     api.registerChannel({ plugin: botschatPlugin });
   },
 };

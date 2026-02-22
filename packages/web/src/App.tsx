@@ -9,6 +9,7 @@ import {
   type ChatMessage,
   type AppState,
   type ActiveView,
+  type ActivityItem,
 } from "./store";
 import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
@@ -694,6 +695,33 @@ export default function App() {
             runId: msg.runId as string,
           });
           break;
+
+        case "agent.activity": {
+          if (!isCurrentSession(sessionKey)) break;
+          const actRunId = (msg.runId as string) || state.streamingRunId || `activity_${Date.now()}`;
+          if (!state.streamingRunId && sessionKey) {
+            const streamThreadId = (msg as any).threadId ?? sessionKey.match(/:thread:(.+)$/)?.[1];
+            dispatch({
+              type: "STREAM_START",
+              runId: actRunId,
+              sessionKey,
+              threadId: streamThreadId,
+            });
+          }
+          dispatch({
+            type: "STREAM_ACTIVITY",
+            runId: actRunId,
+            sessionKey: sessionKey ?? "",
+            activity: {
+              kind: msg.kind as "reasoning" | "tool_start" | "tool_end",
+              text: msg.text as string | undefined,
+              toolName: msg.toolName as string | undefined,
+              durationMs: msg.durationMs as number | undefined,
+              timestamp: Date.now(),
+            },
+          });
+          break;
+        }
 
         case "agent.text": {
           // Skip messages for sessions we're not viewing — they'll be loaded

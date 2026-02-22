@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { useAppState, useAppDispatch, type ChatMessage } from "../store";
+import { useAppState, useAppDispatch, type ChatMessage, type ActivityItem } from "../store";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
 import { SessionTabs } from "./SessionTabs";
@@ -969,6 +969,121 @@ export function ChatWindow({ sendMessage }: ChatWindowProps) {
   );
 }
 
+/** Collapsible panel showing agent thinking and tool call activity */
+function ActivityPanel({ activities }: { activities: ActivityItem[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  if (!activities || activities.length === 0) return null;
+
+  const reasoning = activities.filter((a) => a.kind === "reasoning").pop();
+  const toolEvents = activities.filter((a) => a.kind === "tool_start" || a.kind === "tool_end");
+
+  const toolPairs: Array<{
+    name: string;
+    started: number;
+    ended?: number;
+    durationMs?: number;
+    result?: string;
+  }> = [];
+  for (const t of toolEvents) {
+    if (t.kind === "tool_start") {
+      toolPairs.push({ name: t.toolName ?? "tool", started: t.timestamp });
+    } else {
+      const pair = toolPairs.find((p) => p.name === (t.toolName ?? "tool") && !p.ended);
+      if (pair) {
+        pair.ended = t.timestamp;
+        pair.durationMs = t.durationMs;
+        pair.result = t.text;
+      } else {
+        toolPairs.push({
+          name: t.toolName ?? "tool",
+          started: t.timestamp,
+          ended: t.timestamp,
+          durationMs: t.durationMs,
+          result: t.text,
+        });
+      }
+    }
+  }
+
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  return (
+    <div className="flex flex-col gap-0.5 mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+      {reasoning && (
+        <>
+          <button
+            onClick={() => toggle("reasoning")}
+            className="flex items-center gap-1.5 py-0.5 px-1 -ml-1 rounded hover:bg-[--bg-hover] transition-colors cursor-pointer text-left w-full"
+          >
+            <span className="text-[10px] opacity-60">{expanded.has("reasoning") ? "▾" : "▸"}</span>
+            <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            <span className="opacity-70">Thinking…</span>
+          </button>
+          {expanded.has("reasoning") && (
+            <div
+              className="ml-4 px-2 py-1.5 rounded text-xs whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed"
+              style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}
+            >
+              {reasoning.text || "…"}
+            </div>
+          )}
+        </>
+      )}
+
+      {toolPairs.map((tool, i) => {
+        const key = `tool-${i}`;
+        const isRunning = !tool.ended;
+        const duration = tool.durationMs
+          ? tool.durationMs >= 1000
+            ? `${(tool.durationMs / 1000).toFixed(1)}s`
+            : `${tool.durationMs}ms`
+          : null;
+        const label = isRunning
+          ? `Running ${tool.name}…`
+          : `${tool.name}${duration ? ` (${duration})` : ""}`;
+
+        return (
+          <React.Fragment key={key}>
+            <button
+              onClick={() => toggle(key)}
+              className="flex items-center gap-1.5 py-0.5 px-1 -ml-1 rounded hover:bg-[--bg-hover] transition-colors cursor-pointer text-left w-full"
+            >
+              <span className="text-[10px] opacity-60">{expanded.has(key) ? "▾" : "▸"}</span>
+              {isRunning ? (
+                <span
+                  className="inline-block w-2 h-2 rounded-full animate-pulse flex-shrink-0"
+                  style={{ background: "var(--text-link)" }}
+                />
+              ) : (
+                <svg className="w-3 h-3 opacity-50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.384-3.107A.563.563 0 005.5 12.56v6.88a.563.563 0 00.536.5h.964a.563.563 0 00.536-.5V15.97l4.384 2.53a.563.563 0 00.78-.232l.482-.964a.563.563 0 00-.232-.78zM17 8l4-4m0 0l-4-4m4 4H3" />
+                </svg>
+              )}
+              <span className="opacity-70 truncate">{label}</span>
+            </button>
+            {expanded.has(key) && tool.result && (
+              <div
+                className="ml-4 px-2 py-1.5 rounded text-xs whitespace-pre-wrap max-h-32 overflow-y-auto font-mono leading-relaxed"
+                style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}
+              >
+                {tool.result}
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Flat-row message item (section 5.2) */
 function MessageRow({
   msg,
@@ -1062,6 +1177,9 @@ function MessageRow({
                 {formatMessageTime(msg.timestamp)}
               </span>
             </div>
+          )}
+          {msg.activities && msg.activities.length > 0 && (
+            <ActivityPanel activities={msg.activities} />
           )}
           <MessageContent
             text={msg.text}
