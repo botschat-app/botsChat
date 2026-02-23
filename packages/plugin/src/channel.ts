@@ -100,6 +100,22 @@ function readAgentModel(_agentId: string): string | undefined {
 // Connection registry — maps accountId → live WSS client
 // ---------------------------------------------------------------------------
 const cloudClients = new Map<string, BotsChatCloudClient>();
+const lastSessionKeys = new Map<string, string>();
+
+function isValidSessionKey(target: string): boolean {
+  const t = target.trim();
+  return t.startsWith("agent:") || t.startsWith("botschat:") || /^(ses_|u_)/.test(t);
+}
+
+function resolveTarget(target: string, accountId: string): string {
+  if (isValidSessionKey(target)) return target;
+  const fallback = lastSessionKeys.get(accountId);
+  if (fallback) {
+    console.log(`[botschat] resolveTarget: "${target.slice(0, 20)}…" → fallback to lastSessionKey "${fallback}"`);
+    return fallback;
+  }
+  return target;
+}
 
 function findClientForSession(_sessionKey: string): BotsChatCloudClient | null {
   for (const client of cloudClients.values()) {
@@ -220,6 +236,7 @@ export const botschatPlugin = {
         const t = raw.trim();
         if (t.startsWith("agent:") || t.startsWith("botschat:")) return true;
         if (/^(ses_|u_)/.test(t)) return true;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) return true;
         return false;
       },
     },
@@ -257,15 +274,17 @@ export const botschatPlugin = {
       threadId?: string | number | null;
       accountId?: string | null;
     }) => {
-      const client = getCloudClient(ctx.accountId ?? "default");
+      const accountId = ctx.accountId ?? "default";
+      const client = getCloudClient(accountId);
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const to = resolveTarget(ctx.to, accountId);
       const messageId = crypto.randomUUID();
       let text = ctx.text;
       let encrypted = false;
 
-      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}`);
+      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}, to=${to}`);
 
       if (client.e2eKey) {
         try {
@@ -285,7 +304,7 @@ export const botschatPlugin = {
         : undefined;
       client.send({
         type: "agent.text",
-        sessionKey: ctx.to,
+        sessionKey: to,
         text,
         replyToId: ctx.replyToId ?? undefined,
         threadId: ctx.threadId?.toString(),
@@ -308,6 +327,7 @@ export const botschatPlugin = {
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const to = resolveTarget(ctx.to, accountId);
       const messageId = crypto.randomUUID();
       let text = ctx.text;
       let encrypted = false;
@@ -375,7 +395,7 @@ export const botschatPlugin = {
       if (finalMediaUrl) {
         client.send({
           type: "agent.media",
-          sessionKey: ctx.to,
+          sessionKey: to,
           mediaUrl: finalMediaUrl,
           caption: text || undefined,
           messageId,
@@ -386,7 +406,7 @@ export const botschatPlugin = {
       } else {
         client.send({
           type: "agent.text",
-          sessionKey: ctx.to,
+          sessionKey: to,
           text: text,
           messageId,
           encrypted,
@@ -618,6 +638,8 @@ async function handleCloudMessage(
 ): Promise<void> {
   switch (msg.type) {
     case "user.message": {
+      lastSessionKeys.set(ctx.accountId, msg.sessionKey);
+
       let text = msg.text;
       
       // Decrypt if needed
