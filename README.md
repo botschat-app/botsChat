@@ -4,6 +4,7 @@
 [![npm](https://img.shields.io/npm/v/@botschat/botschat)](https://www.npmjs.com/package/@botschat/botschat)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![macOS](https://img.shields.io/badge/Download-macOS_App-black?logo=apple&logoColor=white)](https://github.com/botschat-app/botsChat/releases/latest/download/BotsChat-mac.dmg)
+[![iOS](https://img.shields.io/badge/Download-iOS_App-blue?logo=apple&logoColor=white)](https://apps.apple.com/app/botschat-chat-with-agent/id6759292058)
 
 A self-hosted, **end-to-end encrypted** chat interface for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
@@ -104,7 +105,7 @@ BotsChat is **100% open source** — the [same code](https://github.com/botschat
 | **B. Run Locally** | Development, no cloud account | Yes |
 | **C. Deploy to Cloudflare** | Remote access (e.g. from phone) | Yes |
 
-> **macOS App**: A native macOS client is also available — [download the latest DMG](https://github.com/botschat-app/botsChat/releases/latest/download/BotsChat-mac.dmg). Signed and notarized, supports Apple Silicon and Intel.
+> **Native Apps**: A macOS client is available — [download the latest DMG](https://github.com/botschat-app/botsChat/releases/latest/download/BotsChat-mac.dmg) (signed and notarized, Apple Silicon + Intel). An iOS app is also available on the [App Store](https://apps.apple.com/app/botschat-chat-with-agent/id6759292058).
 
 Pick one below and follow its steps, then continue to [Install the OpenClaw Plugin](#install-the-openclaw-plugin).
 
