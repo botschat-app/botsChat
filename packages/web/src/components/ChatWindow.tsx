@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useAppState, useAppDispatch, type ChatMessage, type ActivityItem } from "../store";
 import type { WSMessage } from "../ws";
 import { MessageContent } from "./MessageContent";
@@ -1293,10 +1294,10 @@ function MessageRow({
         } />
       </div>
 
-      {/* Mobile: Long-press context menu (bottom sheet) */}
-      {showContextMenu && (
+      {/* Mobile: Long-press context menu (bottom sheet) — portal to body to escape scroll stacking context on iOS */}
+      {showContextMenu && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center"
+          className="fixed inset-0 z-[9999] flex items-end justify-center"
           style={{ background: "rgba(0,0,0,0.4)" }}
           onClick={() => setShowContextMenu(false)}
         >
@@ -1342,7 +1343,8 @@ function MessageRow({
               Cancel
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

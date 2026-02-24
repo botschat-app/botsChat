@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { E2eService } from "../e2e";
+import { openImageLightbox } from "./ImageLightbox";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -441,8 +442,9 @@ function renderA2UIComponent(
         key={id}
         src={url}
         alt={alt}
-        className="max-w-[360px] max-h-64 rounded-md object-contain my-1"
+        className="max-w-[360px] max-h-64 rounded-md object-contain my-1 cursor-pointer hover:opacity-90 transition-opacity"
         style={{ border: "1px solid var(--border)" }}
+        onClick={() => openImageLightbox(url)}
       />
     );
   }
@@ -589,6 +591,19 @@ function buildMarkdownComponents(
       >
         {children}
       </blockquote>
+    );
+  },
+  // Images — open in lightbox
+  img({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) {
+    return (
+      <img
+        src={src}
+        alt={alt ?? ""}
+        className="max-w-[360px] max-h-64 rounded-md object-contain my-1 cursor-pointer hover:opacity-90 transition-opacity"
+        style={{ border: "1px solid var(--border)" }}
+        onClick={() => src && openImageLightbox(src)}
+        {...props}
+      />
     );
   },
 };
@@ -1138,7 +1153,7 @@ function MediaPreview({ url, mediaContextId }: { url: string; mediaContextId?: s
       alt=""
       className="max-w-[360px] max-h-64 rounded-md object-contain cursor-pointer hover:opacity-90 transition-opacity"
       style={{ border: "1px solid var(--border)" }}
-      onClick={() => window.open(effectiveUrl, "_blank")}
+      onClick={() => openImageLightbox(effectiveUrl)}
     />
   );
 }

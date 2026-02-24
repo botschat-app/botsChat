@@ -33,6 +33,7 @@ import { CronDetail } from "./components/CronDetail";
 import { ResizeHandle } from "./components/ResizeHandle";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { MobileLayout } from "./components/MobileLayout";
+import { ImageLightbox } from "./components/ImageLightbox";
 import { dlog } from "./debug-log";
 import { E2eService } from "./e2e";
 import { gtagPageView } from "./analytics";
@@ -1068,6 +1069,7 @@ export default function App() {
             handleDefaultModelChange={handleDefaultModelChange}
             handleSelectJob={handleSelectJob}
           />
+          <ImageLightbox />
         </AppDispatchContext.Provider>
       </AppStateContext.Provider>
     );
@@ -1174,6 +1176,8 @@ export default function App() {
           {/* Global debug log panel — collapsible at bottom */}
           <DebugLogPanel />
         </div>
+
+        <ImageLightbox />
 
         {/* Settings modal */}
         {showSettings && (
