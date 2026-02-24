@@ -11,7 +11,21 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "channel": {
+      "id": "botschat",
+      "label": "BotsChat",
+      "selectionLabel": "BotsChat (E2E encrypted cloud)",
+      "docsPath": "/channels/botschat",
+      "docsLabel": "botschat",
+      "blurb": "E2E encrypted cloud chat interface for OpenClaw agents",
+      "order": 80,
+      "aliases": ["botschat"]
+    },
+    "install": {
+      "npmSpec": "@botschat/botschat",
+      "defaultChoice": "npm"
+    }
   },
   "scripts": {
     "build": "tsc",
