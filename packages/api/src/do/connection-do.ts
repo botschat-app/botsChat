@@ -4,6 +4,7 @@ import { getFcmAccessToken, sendPushNotification } from "../utils/fcm.js";
 import { sendApnsNotification, type ApnsConfig } from "../utils/apns.js";
 import { generateId as generateIdUtil } from "../utils/id.js";
 import { randomUUID } from "../utils/uuid.js";
+import { isDemoUserId } from "../routes/demo.js";
 
 /** Presence info stored in browser WebSocket attachments (survives DO hibernation). */
 interface BrowserAttachment {
@@ -104,8 +105,9 @@ export class ConnectionDO implements DurableObject {
     // Route: /models — Available models (REST)
     if (url.pathname === "/models") {
       await this.ensureCachedModels();
-      console.log(`[DO] GET /models — returning ${this.cachedModels.length} models`);
-      return Response.json({ models: this.cachedModels });
+      const models = this.cachedModels.length ? this.cachedModels : (await this.isDemoUser() ? ConnectionDO.DEMO_MODELS : []);
+      console.log(`[DO] GET /models — returning ${models.length} models`);
+      return Response.json({ models });
     }
 
     // Route: /scan-data — Cached OpenClaw scan data (schedule/instructions/model)
@@ -458,17 +460,25 @@ export class ConnectionDO implements DurableObject {
       ws.serializeAttachment({ ...attachment, authenticated: true });
       // Include userId so the browser can derive the E2E key
       const doUserId2 = doUserId ?? payload.sub;
+      // Persist userId to storage so isDemoUser() and other helpers work
+      // even when no OpenClaw plugin has connected (e.g. demo mode).
+      if (!doUserId) {
+        await this.state.storage.put("userId", doUserId2);
+      }
       ws.send(JSON.stringify({ type: "auth.ok", userId: doUserId2 }));
 
       // Send current OpenClaw connection status + cached models
       await this.ensureCachedModels();
-      const openclawConnected = this.getOpenClawSocket() !== null;
+      const isDemo = isDemoUserId(doUserId2);
+      const openclawConnected = isDemo || this.getOpenClawSocket() !== null;
+      const models = this.cachedModels.length ? this.cachedModels : (isDemo ? ConnectionDO.DEMO_MODELS : []);
+      const model = this.defaultModel || (isDemo ? "mock/echo-1.0" : null);
       ws.send(
         JSON.stringify({
           type: "connection.status",
           openclawConnected,
-          defaultModel: this.defaultModel,
-          models: this.cachedModels,
+          defaultModel: model,
+          models,
         }),
       );
       return;
@@ -554,6 +564,8 @@ export class ConnectionDO implements DurableObject {
         }
       }
       openclawWs.send(JSON.stringify(enrichedMsg));
+    } else if (await this.isDemoUser()) {
+      await this.handleDemoMockReply(ws, msg);
     } else {
       ws.send(
         JSON.stringify({
@@ -574,6 +586,10 @@ export class ConnectionDO implements DurableObject {
   private async handleGetScanData(): Promise<Response> {
     const openclawWs = this.getOpenClawSocket();
     if (!openclawWs) {
+      // Demo users get mock scan data instead of 503
+      if (await this.isDemoUser()) {
+        return Response.json({ tasks: [] });
+      }
       return Response.json(
         { error: "OpenClaw not connected", tasks: [] },
         { status: 503 },
@@ -614,7 +630,7 @@ export class ConnectionDO implements DurableObject {
     }
   }
 
-  private handleStatus(): Response {
+  private async handleStatus(): Promise<Response> {
     const sockets = this.state.getWebSockets();
     const openclawSocket = sockets.find((s) => this.getTag(s) === "openclaw");
     const browserCount = sockets.filter((s) =>
@@ -627,9 +643,10 @@ export class ConnectionDO implements DurableObject {
       openclawAuthenticated = att?.authenticated ?? false;
     }
 
+    const isDemo = await this.isDemoUser();
     return Response.json({
-      openclawConnected: !!openclawSocket,
-      openclawAuthenticated,
+      openclawConnected: isDemo || !!openclawSocket,
+      openclawAuthenticated: isDemo || openclawAuthenticated,
       browserClients: browserCount,
     });
   }
@@ -1402,6 +1419,126 @@ export class ConnectionDO implements DurableObject {
         .run();
     } catch (err) {
       console.error("Failed to handle job update:", err);
+    }
+  }
+
+  // ---- Demo mode (built-in mock OpenClaw) ----
+
+  private static readonly DEMO_MODELS = [
+    { id: "mock/echo-1.0", name: "Echo 1.0", provider: "mock" },
+    { id: "anthropic/claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic" },
+    { id: "openai/gpt-4o", name: "GPT-4o", provider: "openai" },
+  ];
+
+  private async isDemoUser(): Promise<boolean> {
+    const userId = await this.state.storage.get<string>("userId");
+    return !!userId && isDemoUserId(userId);
+  }
+
+  /**
+   * Handle a browser message when no OpenClaw plugin is connected and the
+   * user is a demo account. Simulates the mock OpenClaw responses inline.
+   */
+  private async handleDemoMockReply(
+    ws: WebSocket,
+    msg: Record<string, unknown>,
+  ): Promise<void> {
+    const sessionKey = msg.sessionKey as string;
+
+    if (msg.type === "user.message") {
+      const userText = (msg.text as string) ?? "";
+      const replyText = `Mock reply: ${userText}`;
+      const replyId = randomUUID();
+
+      // Small delay to feel natural
+      await new Promise((r) => setTimeout(r, 300));
+
+      const reply = {
+        type: "agent.text",
+        sessionKey,
+        text: replyText,
+        messageId: replyId,
+      };
+
+      await this.persistMessage({
+        id: replyId,
+        sender: "agent",
+        sessionKey,
+        text: replyText,
+        encrypted: 0,
+      });
+
+      this.broadcastToBrowsers(JSON.stringify(reply));
+    } else if (msg.type === "user.media") {
+      const replyId = randomUUID();
+      await new Promise((r) => setTimeout(r, 300));
+      const reply = {
+        type: "agent.text",
+        sessionKey,
+        text: `📎 Received media: ${msg.mediaUrl}`,
+        messageId: replyId,
+      };
+      await this.persistMessage({ id: replyId, sender: "agent", sessionKey, text: reply.text, encrypted: 0 });
+      this.broadcastToBrowsers(JSON.stringify(reply));
+    } else if (msg.type === "user.command" || msg.type === "user.action") {
+      const replyId = randomUUID();
+      await new Promise((r) => setTimeout(r, 200));
+      const text = msg.type === "user.command"
+        ? `Command received: /${msg.command} ${msg.args || ""}`.trim()
+        : `Action received: ${msg.action}`;
+      const reply = { type: "agent.text", sessionKey, text, messageId: replyId };
+      await this.persistMessage({ id: replyId, sender: "agent", sessionKey, text, encrypted: 0 });
+      this.broadcastToBrowsers(JSON.stringify(reply));
+    } else if (msg.type === "task.schedule") {
+      const ack = {
+        type: "task.schedule.ack",
+        cronJobId: (msg.cronJobId as string) || `mock_cron_${Date.now()}`,
+        taskId: msg.taskId,
+        ok: true,
+      };
+      this.broadcastToBrowsers(JSON.stringify(ack));
+    } else if (msg.type === "task.run") {
+      const jobId = `mock_job_${Date.now()}`;
+      const startedAt = Math.floor(Date.now() / 1000);
+      this.broadcastToBrowsers(JSON.stringify({
+        type: "job.update",
+        cronJobId: msg.cronJobId,
+        jobId,
+        sessionKey: sessionKey ?? "",
+        status: "running",
+        startedAt,
+      }));
+      await new Promise((r) => setTimeout(r, 2000));
+      const finishedAt = Math.floor(Date.now() / 1000);
+      const update = {
+        type: "job.update",
+        cronJobId: msg.cronJobId,
+        jobId,
+        sessionKey: sessionKey ?? "",
+        status: "ok",
+        summary: "Mock task executed successfully",
+        startedAt,
+        finishedAt,
+        durationMs: (finishedAt - startedAt) * 1000,
+      };
+      await this.handleJobUpdate(update);
+      this.broadcastToBrowsers(JSON.stringify(update));
+    } else if (msg.type === "settings.defaultModel") {
+      const model = (msg.defaultModel as string) ?? "";
+      if (model) {
+        this.defaultModel = model;
+        await this.state.storage.put("defaultModel", model);
+      }
+      this.broadcastToBrowsers(JSON.stringify({
+        type: "defaultModel.updated",
+        model,
+      }));
+      this.broadcastToBrowsers(JSON.stringify({
+        type: "connection.status",
+        openclawConnected: true,
+        defaultModel: this.defaultModel,
+        models: this.cachedModels.length ? this.cachedModels : ConnectionDO.DEMO_MODELS,
+      }));
     }
   }
 

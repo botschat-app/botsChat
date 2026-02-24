@@ -357,6 +357,7 @@ auth.get("/me", async (c) => {
 auth.delete("/account", async (c) => {
   const userId = c.get("userId" as never) as string;
   if (!userId) return c.json({ error: "Unauthorized" }, 401);
+  if (userId.startsWith("demo_")) return c.json({ error: "Demo account cannot be deleted" }, 403);
 
   // Delete all user media from R2
   const prefix = `${userId}/`;

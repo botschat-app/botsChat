@@ -143,6 +143,8 @@ export const authApi = {
   /** Sign in with any Firebase provider (Google, GitHub, etc.) */
   firebase: (idToken: string) =>
     request<AuthResponse>("POST", "/auth/firebase", { idToken }),
+  /** Demo login — no credentials required */
+  demo: () => request<AuthResponse>("POST", "/demo/login"),
   me: () => request<{ id: string; email: string; displayName: string | null; settings: UserSettings }>("GET", "/me"),
   deleteAccount: () => request<{ ok: boolean }>("DELETE", "/auth/account"),
 };

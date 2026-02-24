@@ -15,6 +15,7 @@ import { upload } from "./routes/upload.js";
 import { push } from "./routes/push.js";
 import { setup } from "./routes/setup.js";
 import { devAuth } from "./routes/dev-auth.js";
+import { demo, isDemoUserId } from "./routes/demo.js";
 
 // Re-export the Durable Object class so wrangler can find it
 export { ConnectionDO } from "./do/connection-do.js";
@@ -88,11 +89,36 @@ app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
 // ---- Public routes (no auth) ----
 app.route("/api/auth", auth);
 app.route("/api/dev-auth", devAuth);
+app.route("/api/demo", demo);
 app.route("/api/setup", setup);
 
 // ---- Protected routes (require Bearer token) ----
 const protectedApp = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 protectedApp.use("/*", authMiddleware());
+
+// Block sensitive operations for the demo user
+const DEMO_BLOCKED_ROUTES: Array<{ method: string; pattern: RegExp }> = [
+  { method: "POST",   pattern: /^\/pairing-tokens/ },
+  { method: "POST",   pattern: /^\/upload/ },
+  { method: "DELETE", pattern: /^\/$/ },  // DELETE /api (account deletion goes via /api/auth/account)
+];
+protectedApp.use("/*", async (c, next) => {
+  const userId = c.get("userId");
+  if (!isDemoUserId(userId)) return next();
+  const method = c.req.method;
+  const path = c.req.path.replace(/^\/api/, "");
+  // Block pairing tokens, file upload, and any DELETE (channels, tasks, sessions, account)
+  if (method === "DELETE") {
+    return c.json({ error: "Demo account cannot perform this action" }, 403);
+  }
+  for (const r of DEMO_BLOCKED_ROUTES) {
+    if (method === r.method && r.pattern.test(path)) {
+      return c.json({ error: "Demo account cannot perform this action" }, 403);
+    }
+  }
+  return next();
+});
+
 protectedApp.route("/agents", agents);
 protectedApp.route("/channels", channels);
 protectedApp.route("/models", models);

@@ -5,6 +5,14 @@ import { useAppDispatch } from "../store";
 import { dlog } from "../debug-log";
 import { isFirebaseConfigured, signInWithGoogle, signInWithGitHub, signInWithApple } from "../firebase";
 
+function PlayIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+      <path d="M8 5v14l11-7z"/>
+    </svg>
+  );
+}
+
 /** Google "G" logo SVG */
 function GoogleIcon() {
   return (
@@ -44,10 +52,11 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | "apple" | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
   const firebaseEnabled = isFirebaseConfigured();
-  const anyLoading = loading || !!oauthLoading;
+  const anyLoading = loading || !!oauthLoading || demoLoading;
 
   // Fetch server-side auth config to determine which methods are available
   useEffect(() => {
@@ -130,6 +139,23 @@ export function LoginPage() {
     } finally {
       clearTimeout(timeout);
       setOauthLoading(null);
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setError("");
+    setDemoLoading(true);
+    try {
+      dlog.info("Auth", "Starting demo login");
+      const res = await authApi.demo();
+      dlog.info("Auth", `Demo login success — user ${res.id}`);
+      handleAuthSuccess(res);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Demo login failed";
+      dlog.error("Auth", `Demo login failed: ${message}`);
+      setError(message);
+    } finally {
+      setDemoLoading(false);
     }
   };
 
@@ -264,6 +290,38 @@ export function LoginPage() {
                   <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
                 </div>
               )}
+            </>
+          )}
+
+          {/* Demo mode */}
+          {configLoaded && (
+            <>
+              <div className="flex items-center gap-3 my-5">
+                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+                <span className="text-caption" style={{ color: "var(--text-muted)" }}>
+                  or
+                </span>
+                <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+              </div>
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={anyLoading}
+                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 font-medium text-body rounded-sm disabled:opacity-50 transition-colors hover:brightness-95"
+                style={{
+                  background: "var(--bg-active)",
+                  color: "#fff",
+                }}
+              >
+                {demoLoading ? (
+                  <span>Loading demo...</span>
+                ) : (
+                  <>
+                    <PlayIcon />
+                    <span>Try Demo</span>
+                  </>
+                )}
+              </button>
             </>
           )}
 
