@@ -288,6 +288,41 @@ async function handleUserMessage(msg) {
     const runId = randomUUID();
     send({ type: "agent.stream.start", sessionKey: msg.sessionKey, runId });
 
+    // Simulate reasoning/thinking
+    send({
+      type: "agent.activity",
+      sessionKey: msg.sessionKey,
+      runId,
+      kind: "reasoning",
+      text: `Analyzing the user's message: "${truncate(msg.text, 60)}".\nLet me think about how to respond…`,
+    });
+    logSend("[agent.activity] reasoning");
+    await sleep(200);
+
+    // Simulate a tool call
+    send({
+      type: "agent.activity",
+      sessionKey: msg.sessionKey,
+      runId,
+      kind: "tool_start",
+      toolName: "web_search",
+    });
+    logSend("[agent.activity] tool_start: web_search");
+    await sleep(800);
+
+    send({
+      type: "agent.activity",
+      sessionKey: msg.sessionKey,
+      runId,
+      kind: "tool_end",
+      toolName: "web_search",
+      durationMs: 800,
+      text: `Found 3 relevant results for: "${truncate(msg.text, 40)}"`,
+    });
+    logSend("[agent.activity] tool_end: web_search");
+    await sleep(100);
+
+    // Stream the reply text
     const words = replyText.split(" ");
     for (let i = 0; i < words.length; i++) {
       await sleep(50);

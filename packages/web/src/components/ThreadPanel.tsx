@@ -7,6 +7,7 @@ import { E2eService } from "../e2e";
 import { dlog } from "../debug-log";
 import { randomUUID } from "../utils/uuid";
 import { formatMessageTime, formatFullDateTime } from "../utils/time";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 
 /** Simple string hash for action prompt keys (matches MessageContent / ChatWindow) */
 function simpleHash(str: string): string {
@@ -26,6 +27,7 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [input, setInput] = useState("");
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
 
   // Load thread message history when a thread is opened
   useEffect(() => {
@@ -334,11 +336,13 @@ export function ThreadPanel({ sendMessage }: ThreadPanelProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isIMEActive()) {
                 e.preventDefault();
                 handleSend();
               }
             }}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             placeholder="Reply…"
             rows={1}
             className="w-full px-3 py-2 text-body bg-transparent resize-none focus:outline-none placeholder:text-[--text-muted]"

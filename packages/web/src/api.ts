@@ -4,11 +4,13 @@ import { Capacitor } from "@capacitor/core";
 import { dlog } from "./debug-log";
 
 /**
- * In Capacitor (native app), the WebView loads from capacitor:// so relative
- * URLs won't reach the API server. We use the full production URL instead.
+ * In native apps (Capacitor iOS/Android or macOS), the WebView loads from a
+ * custom scheme so relative URLs won't reach the API server.
+ * We use the full production URL instead.
  * On the web, relative "/api" works because the same host serves both.
  */
-const SERVER_URL = Capacitor.isNativePlatform()
+const isNative = Capacitor.isNativePlatform() || !!(window as any).__BOTSCHAT_NATIVE__;
+const SERVER_URL = isNative
   ? "https://console.botschat.app"
   : "";
 

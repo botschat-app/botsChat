@@ -455,13 +455,21 @@ app.all("/api/gateway/:connId", async (c) => {
 
   // Cache the rate limit after the DO responds (success or rate-limited).
   // 101 = WebSocket accepted; 429 = DO's own rate limit.
-  // Either way, prevent further DO wake-ups for GATEWAY_COOLDOWN_S.
+  // Either way, prevent further DO wake-ups.
+  // When the DO returns 429, honour its Retry-After so the Worker cache
+  // aligns with the DO's actual cooldown (avoids the client retrying after
+  // the Worker cache expires but before the DO cooldown ends).
   if (doResp.status === 101 || doResp.status === 429) {
+    let cacheTtl = GATEWAY_COOLDOWN_S;
+    if (doResp.status === 429) {
+      const doRetry = parseInt(doResp.headers.get("Retry-After") ?? "", 10);
+      if (doRetry > 0) cacheTtl = doRetry;
+    }
     c.executionCtx.waitUntil(
       cache.put(
         rateCacheReq,
         new Response(null, {
-          headers: { "Cache-Control": `public, max-age=${GATEWAY_COOLDOWN_S}` },
+          headers: { "Cache-Control": `public, max-age=${cacheTtl}` },
         }),
       ),
     );

@@ -5,11 +5,62 @@ import {
   resolveDefaultBotsChatAccountId,
   setBotsChatAccountEnabled,
 } from "./accounts.js";
-import { getBotsChatRuntime } from "./runtime.js";
+import { getBotsChatRuntime, getBotsChatApi } from "./runtime.js";
 import type { BotsChatChannelConfig, CloudInbound, ResolvedBotsChatAccount } from "./types.js";
 import { BotsChatCloudClient } from "./ws-client.js";
 import crypto from "crypto";
 import { encryptText, encryptBytes, decryptText, decryptBytes, toBase64, fromBase64 } from "./e2e-crypto.js";
+import fs from "fs";
+import path from "path";
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+  ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+  ".pdf": "application/pdf",
+};
+
+async function readMedia(urlOrPath: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) {
+    const resp = await fetch(urlOrPath, { signal: AbortSignal.timeout(15_000) });
+    if (!resp.ok) return null;
+    return {
+      bytes: new Uint8Array(await resp.arrayBuffer()),
+      contentType: resp.headers.get("Content-Type") ?? "application/octet-stream",
+    };
+  }
+  const filePath = urlOrPath.startsWith("file://") ? urlOrPath.slice(7) : urlOrPath;
+  try {
+    const buf = await fs.promises.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    return { bytes: new Uint8Array(buf), contentType: MIME_BY_EXT[ext] ?? "application/octet-stream" };
+  } catch {
+    return null;
+  }
+}
+
+/** Subset of OpenClaw's ReplyPayload that the deliver callback receives. */
+type DeliverPayload = {
+  text?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+};
+
+async function encryptForStream(
+  client: BotsChatCloudClient,
+  text: string,
+): Promise<{ text: string; encrypted: boolean; id: string }> {
+  const id = crypto.randomUUID();
+  if (client.e2eKey) {
+    try {
+      const ct = await encryptText(client.e2eKey, text, id);
+      return { text: toBase64(ct), encrypted: true, id };
+    } catch {
+      return { text, encrypted: false, id };
+    }
+  }
+  return { text, encrypted: false, id };
+}
 
 // ---------------------------------------------------------------------------
 // A2UI message-tool hints — injected via agentPrompt.messageToolHints so
@@ -49,6 +100,96 @@ function readAgentModel(_agentId: string): string | undefined {
 // Connection registry — maps accountId → live WSS client
 // ---------------------------------------------------------------------------
 const cloudClients = new Map<string, BotsChatCloudClient>();
+const lastSessionKeys = new Map<string, string>();
+
+function isValidSessionKey(target: string): boolean {
+  const t = target.trim();
+  return t.startsWith("agent:") || t.startsWith("botschat:") || /^(ses_|u_)/.test(t);
+}
+
+function resolveTarget(target: string, accountId: string): string {
+  if (isValidSessionKey(target)) return target;
+  const fallback = lastSessionKeys.get(accountId);
+  if (fallback) {
+    console.log(`[botschat] resolveTarget: "${target.slice(0, 20)}…" → fallback to lastSessionKey "${fallback}"`);
+    return fallback;
+  }
+  return target;
+}
+
+function findClientForSession(_sessionKey: string): BotsChatCloudClient | null {
+  for (const client of cloudClients.values()) {
+    if (client.connected) return client;
+  }
+  return null;
+}
+
+let hooksRegistered = false;
+
+function registerActivityHooks(): void {
+  if (hooksRegistered) return;
+  const api = getBotsChatApi();
+  if (!api?.registerHook) {
+    console.error("[botschat] registerActivityHooks: api.registerHook not available", { hasApi: !!api, keys: api ? Object.keys(api).slice(0, 10) : [] });
+    return;
+  }
+  hooksRegistered = true;
+  console.log("[botschat] Registering before_tool_call / after_tool_call hooks");
+
+  api.registerHook("before_tool_call", async (
+    event: { toolName: string; params: Record<string, unknown> },
+    ctx: { agentId?: string; sessionKey?: string; toolName: string },
+  ) => {
+    console.log(`[botschat][hook] before_tool_call: tool=${event.toolName} sessionKey=${ctx.sessionKey ?? "none"}`);
+    if (!ctx.sessionKey) return;
+    const client = findClientForSession(ctx.sessionKey);
+    if (!client?.connected) return;
+    client.send({
+      type: "agent.activity",
+      sessionKey: ctx.sessionKey,
+      runId: "",
+      kind: "tool_start",
+      toolName: event.toolName,
+    });
+  });
+
+  api.registerHook("after_tool_call", async (
+    event: { toolName: string; params: Record<string, unknown>; result?: unknown; error?: string; durationMs?: number },
+    ctx: { agentId?: string; sessionKey?: string; toolName: string },
+  ) => {
+    console.log(`[botschat][hook] after_tool_call: tool=${event.toolName} sessionKey=${ctx.sessionKey ?? "none"} durationMs=${event.durationMs ?? "?"}`);
+    if (!ctx.sessionKey) return;
+    const client = findClientForSession(ctx.sessionKey);
+    if (!client?.connected) return;
+
+    let text: string | undefined;
+    if (typeof event.result === "string" && event.result) {
+      text = event.result.length > 500 ? event.result.slice(0, 500) + "…" : event.result;
+    } else if (event.error) {
+      text = `Error: ${event.error}`;
+    }
+
+    const msg: Record<string, unknown> = {
+      type: "agent.activity",
+      sessionKey: ctx.sessionKey,
+      runId: "",
+      kind: "tool_end",
+      toolName: event.toolName,
+      durationMs: event.durationMs,
+    };
+
+    if (text) {
+      const enc = await encryptForStream(client, text);
+      msg.text = enc.text;
+      if (enc.encrypted) {
+        msg.encrypted = true;
+        msg.activityId = enc.id;
+      }
+    }
+
+    client.send(msg as any);
+  });
+}
 /** Maps accountId → cloudUrl so handleCloudMessage can resolve relative URLs */
 const cloudUrls = new Map<string, string>();
 /** Maps accountId → pairingToken for plugin HTTP uploads */
@@ -95,6 +236,7 @@ export const botschatPlugin = {
         const t = raw.trim();
         if (t.startsWith("agent:") || t.startsWith("botschat:")) return true;
         if (/^(ses_|u_)/.test(t)) return true;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) return true;
         return false;
       },
     },
@@ -138,15 +280,17 @@ export const botschatPlugin = {
       threadId?: string | number | null;
       accountId?: string | null;
     }) => {
-      const client = getCloudClient(ctx.accountId ?? "default");
+      const accountId = ctx.accountId ?? "default";
+      const client = getCloudClient(accountId);
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const to = resolveTarget(ctx.to, accountId);
       const messageId = crypto.randomUUID();
       let text = ctx.text;
       let encrypted = false;
 
-      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}`);
+      console.log(`[botschat][sendText] e2eKey=${!!client.e2eKey}, textLen=${text.length}, to=${to}`);
 
       if (client.e2eKey) {
         try {
@@ -166,7 +310,7 @@ export const botschatPlugin = {
         : undefined;
       client.send({
         type: "agent.text",
-        sessionKey: ctx.to,
+        sessionKey: to,
         text,
         replyToId: ctx.replyToId ?? undefined,
         threadId: ctx.threadId?.toString(),
@@ -189,6 +333,7 @@ export const botschatPlugin = {
       if (!client?.connected) {
         return { ok: false, error: new Error("Not connected to BotsChat cloud") };
       }
+      const to = resolveTarget(ctx.to, accountId);
       const messageId = crypto.randomUUID();
       let text = ctx.text;
       let encrypted = false;
@@ -206,23 +351,25 @@ export const botschatPlugin = {
 
       let finalMediaUrl = ctx.mediaUrl;
 
-      if (client.e2eKey && ctx.mediaUrl && !ctx.mediaUrl.startsWith("/api/media/")) {
+      if (ctx.mediaUrl && !ctx.mediaUrl.startsWith("/api/media/")) {
         try {
           const baseUrl = cloudUrls.get(accountId);
           const token = pairingTokens.get(accountId);
           if (baseUrl && token) {
-            const resp = await fetch(ctx.mediaUrl, { signal: AbortSignal.timeout(15_000) });
-            if (resp.ok) {
-              const rawBytes = new Uint8Array(await resp.arrayBuffer());
-              const encBytes = await encryptBytes(client.e2eKey, rawBytes, `${messageId}:media`);
+            const media = await readMedia(ctx.mediaUrl);
+            if (media) {
+              let uploadBytes: Uint8Array = media.bytes;
+              if (client.e2eKey) {
+                uploadBytes = await encryptBytes(client.e2eKey, media.bytes, `${messageId}:media`);
+                mediaEncrypted = true;
+              }
 
-              const contentType = resp.headers.get("Content-Type") ?? "application/octet-stream";
               const extMap: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
-              const ext = extMap[contentType] ?? (contentType.startsWith("image/") ? "png" : "bin");
+              const ext = extMap[media.contentType] ?? (media.contentType.startsWith("image/") ? "png" : "bin");
 
               const formData = new FormData();
-              const blob = new Blob([encBytes as any], { type: contentType });
-              formData.append("file", blob, `encrypted.${ext}`);
+              const blob = new Blob([uploadBytes as any], { type: media.contentType });
+              formData.append("file", blob, `${mediaEncrypted ? "encrypted" : "media"}.${ext}`);
 
               const uploadUrl = `${baseUrl.replace(/\/$/, "")}/api/plugin-upload`;
               const uploadResp = await fetch(uploadUrl, {
@@ -235,17 +382,16 @@ export const botschatPlugin = {
               if (uploadResp.ok) {
                 const result = await uploadResp.json() as { url: string };
                 finalMediaUrl = result.url;
-                mediaEncrypted = true;
-                console.log(`[botschat][sendMedia] E2E encrypted media uploaded (${rawBytes.length} → ${encBytes.length} bytes)`);
+                console.log(`[botschat][sendMedia] media uploaded to R2 (${media.bytes.length} bytes, e2e=${mediaEncrypted})`);
               } else {
                 console.error(`[botschat][sendMedia] Plugin upload failed: HTTP ${uploadResp.status}`);
               }
             } else {
-              console.error(`[botschat][sendMedia] Failed to download media: HTTP ${resp.status}`);
+              console.error(`[botschat][sendMedia] Failed to read media: ${ctx.mediaUrl}`);
             }
           }
         } catch (err) {
-          console.error(`[botschat][sendMedia] E2E media encryption failed, sending unencrypted:`, err);
+          console.error(`[botschat][sendMedia] media upload failed, sending raw:`, err);
         }
       }
 
@@ -255,7 +401,7 @@ export const botschatPlugin = {
       if (finalMediaUrl) {
         client.send({
           type: "agent.media",
-          sessionKey: ctx.to,
+          sessionKey: to,
           mediaUrl: finalMediaUrl,
           caption: text || undefined,
           messageId,
@@ -266,7 +412,7 @@ export const botschatPlugin = {
       } else {
         client.send({
           type: "agent.text",
-          sessionKey: ctx.to,
+          sessionKey: to,
           text: text,
           messageId,
           encrypted,
@@ -343,6 +489,7 @@ export const botschatPlugin = {
       cloudUrls.set(accountId, account.cloudUrl);
       pairingTokens.set(accountId, account.pairingToken);
       client.connect();
+      registerActivityHooks();
 
       ctx.abortSignal.addEventListener("abort", () => {
         client.disconnect();
@@ -497,6 +644,8 @@ async function handleCloudMessage(
 ): Promise<void> {
   switch (msg.type) {
     case "user.message": {
+      lastSessionKeys.set(ctx.accountId, msg.sessionKey);
+
       let text = msg.text;
       
       // Decrypt if needed
@@ -644,44 +793,115 @@ async function handleCloudMessage(
       // Create a reply dispatcher that sends responses back through the cloud WSS
       // NOTE: reuses `client` from line ~424 (same block scope, same value)
       console.log(`[botschat] client for accountId=${ctx.accountId}: connected=${client?.connected}`);
-      const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}`);
+      const deliver = async (payload: DeliverPayload) => {
+        const mediaList = payload.mediaUrls?.length
+          ? payload.mediaUrls
+          : payload.mediaUrl
+            ? [payload.mediaUrl]
+            : [];
+        console.log(`[botschat][deliver] called, connected=${client?.connected}, hasKey=${!!client?.e2eKey}, textLen=${(payload.text || "").length}, mediaCount=${mediaList.length}`);
         if (!client?.connected) { console.log("[botschat][deliver] SKIP - not connected"); return; }
-        const messageId = crypto.randomUUID();
-        let text = payload.text ?? "";
-        let caption = payload.text ?? "";
-        let encrypted = false;
 
-        if (client.e2eKey && text) {
-          try {
-            const ct = await encryptText(client.e2eKey, text, messageId);
-            text = toBase64(ct);
-            caption = text;
-            encrypted = true;
-            console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}, encrypted=${encrypted}`);
-          } catch (err) {
-            console.error("[botschat][deliver] E2E encrypt failed:", err);
+        if (mediaList.length > 0) {
+          const accountId = ctx.accountId ?? "default";
+          const baseUrl = cloudUrls.get(accountId);
+          const token = pairingTokens.get(accountId);
+
+          let first = true;
+          for (const rawMediaUrl of mediaList) {
+            const messageId = crypto.randomUUID();
+            const rawCaption = first ? (payload.text ?? "") : "";
+            first = false;
+            let caption = rawCaption;
+            let encrypted = false;
+
+            if (client.e2eKey && caption) {
+              try {
+                const ct = await encryptText(client.e2eKey, caption, messageId);
+                caption = toBase64(ct);
+                encrypted = true;
+              } catch (err) {
+                console.error("[botschat][deliver] E2E encrypt caption failed:", err);
+              }
+            }
+
+            let finalMediaUrl = rawMediaUrl;
+            let mediaEncrypted = false;
+
+            if (!rawMediaUrl.startsWith("/api/media/") && baseUrl && token) {
+              try {
+                const media = await readMedia(rawMediaUrl);
+                if (media) {
+                  let uploadBytes: Uint8Array = media.bytes;
+                  if (client.e2eKey) {
+                    uploadBytes = await encryptBytes(client.e2eKey, media.bytes, `${messageId}:media`);
+                    mediaEncrypted = true;
+                  }
+
+                  const extMap: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+                  const ext = extMap[media.contentType] ?? (media.contentType.startsWith("image/") ? "png" : "bin");
+                  const formData = new FormData();
+                  const blob = new Blob([uploadBytes as any], { type: media.contentType });
+                  formData.append("file", blob, `${mediaEncrypted ? "encrypted" : "media"}.${ext}`);
+
+                  const uploadUrl = `${baseUrl.replace(/\/$/, "")}/api/plugin-upload`;
+                  const uploadResp = await fetch(uploadUrl, {
+                    method: "POST",
+                    headers: { "X-Pairing-Token": token },
+                    body: formData as any,
+                    signal: AbortSignal.timeout(30_000),
+                  });
+                  if (uploadResp.ok) {
+                    const result = await uploadResp.json() as { url: string };
+                    finalMediaUrl = result.url;
+                    console.log(`[botschat][deliver] media uploaded to R2: ${rawMediaUrl.slice(0, 80)} → ${finalMediaUrl} (${media.bytes.length} bytes, e2e=${mediaEncrypted})`);
+                  } else {
+                    console.error(`[botschat][deliver] plugin-upload failed: HTTP ${uploadResp.status}`);
+                  }
+                } else {
+                  console.error(`[botschat][deliver] failed to read media: ${rawMediaUrl.slice(0, 120)}`);
+                }
+              } catch (err) {
+                console.error("[botschat][deliver] media upload failed, sending raw URL:", err);
+              }
+            }
+
+            const notifyPreviewText = (encrypted && client.notifyPreview && rawCaption)
+              ? (rawCaption.length > 100 ? rawCaption.slice(0, 100) + "…" : rawCaption)
+              : undefined;
+            console.log(`[botschat][deliver] sending: type=agent.media, encrypted=${encrypted}, mediaEncrypted=${mediaEncrypted}, messageId=${messageId}`);
+            client.send({
+              type: "agent.media",
+              sessionKey: msg.sessionKey,
+              mediaUrl: finalMediaUrl,
+              caption: caption || undefined,
+              threadId,
+              messageId,
+              encrypted,
+              mediaEncrypted,
+              ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
+            });
           }
-        } else {
-          console.log(`[botschat][deliver] no encryption: hasKey=${!!client.e2eKey}, textLen=${text.length}`);
-        }
-
-        const notifyPreviewText = (encrypted && client.notifyPreview && payload.text)
-          ? (payload.text.length > 100 ? payload.text.slice(0, 100) + "…" : payload.text)
-          : undefined;
-        console.log(`[botschat][deliver] sending: type=${payload.mediaUrl ? "agent.media" : "agent.text"}, encrypted=${encrypted}, messageId=${messageId}, notifyPreview=${!!notifyPreviewText}`);
-        if (payload.mediaUrl) {
-          client.send({
-            type: "agent.media",
-            sessionKey: msg.sessionKey,
-            mediaUrl: payload.mediaUrl,
-            caption: encrypted ? caption : payload.text,
-            threadId,
-            messageId,
-            encrypted,
-            ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
-          });
         } else if (payload.text) {
+          const messageId = crypto.randomUUID();
+          let text = payload.text;
+          let encrypted = false;
+
+          if (client.e2eKey && text) {
+            try {
+              const ct = await encryptText(client.e2eKey, text, messageId);
+              text = toBase64(ct);
+              encrypted = true;
+              console.log(`[botschat][deliver] encrypted OK: msgId=${messageId}, ctLen=${text.length}`);
+            } catch (err) {
+              console.error("[botschat][deliver] E2E encrypt failed:", err);
+            }
+          }
+
+          const notifyPreviewText = (encrypted && client.notifyPreview && payload.text)
+            ? (payload.text.length > 100 ? payload.text.slice(0, 100) + "…" : payload.text)
+            : undefined;
+          console.log(`[botschat][deliver] sending: type=agent.text, encrypted=${encrypted}, messageId=${messageId}`);
           client.send({
             type: "agent.text",
             sessionKey: msg.sessionKey,
@@ -692,9 +912,6 @@ async function handleCloudMessage(
             ...(notifyPreviewText ? { notifyPreview: notifyPreviewText } : {}),
           });
           // Detect model-change confirmations and emit model.changed
-          // Handles both formats:
-          //   "Model set to provider/model."  (no parentheses)
-          //   "Model set to Friendly Name (provider/model)."  (with parentheses)
           const modelMatch = payload.text.match(
             /Model (?:set to|reset to default)\b.*?([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\/[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)/,
           );
@@ -713,9 +930,8 @@ async function handleCloudMessage(
       const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       let streamStarted = false;
 
-      const onPartialReply = (payload: { text?: string }) => {
+      const onPartialReply = async (payload: { text?: string }) => {
         if (!client?.connected || !payload.text) return;
-        // Send stream start on first chunk
         if (!streamStarted) {
           streamStarted = true;
           client.send({
@@ -724,12 +940,13 @@ async function handleCloudMessage(
             runId,
           });
         }
-        // Send the accumulated text so far
+        const enc = await encryptForStream(client, payload.text);
         client.send({
           type: "agent.stream.chunk",
           sessionKey: msg.sessionKey,
           runId,
-          text: payload.text,
+          text: enc.text,
+          ...(enc.encrypted ? { encrypted: true, chunkId: enc.id } : {}),
         });
       };
 
@@ -737,9 +954,7 @@ async function handleCloudMessage(
       const { dispatcher, replyOptions, markDispatchIdle } =
         runtime.channel.reply.createReplyDispatcherWithTyping({
           deliver: async (payload: unknown) => {
-            // The payload from the dispatcher is a ReplyPayload
-            const p = payload as { text?: string; mediaUrl?: string };
-            await deliver(p);
+            await deliver(payload as DeliverPayload);
           },
           onTypingStart: () => {},
           onTypingStop: () => {},
@@ -752,6 +967,26 @@ async function handleCloudMessage(
         replyOptions: {
           ...replyOptions,
           onPartialReply,
+          onReasoningStream: async (payload: { text?: string }) => {
+            if (!client?.connected || !payload.text) return;
+            if (!streamStarted) {
+              streamStarted = true;
+              client.send({
+                type: "agent.stream.start",
+                sessionKey: msg.sessionKey,
+                runId,
+              });
+            }
+            const enc = await encryptForStream(client, payload.text);
+            client.send({
+              type: "agent.activity",
+              sessionKey: msg.sessionKey,
+              runId,
+              kind: "reasoning",
+              text: enc.text,
+              ...(enc.encrypted ? { encrypted: true, activityId: enc.id } : {}),
+            });
+          },
           allowPartialStream: true,
         },
       });
@@ -1286,11 +1521,18 @@ async function handleTaskRun(
         }, THROTTLE_MS);
       };
 
-      const deliver = async (payload: { text?: string; mediaUrl?: string }) => {
-        if (payload.text) {
-          completedParts.push(payload.text);
+      const deliver = async (payload: DeliverPayload) => {
+        const mediaList = payload.mediaUrls?.length
+          ? payload.mediaUrls
+          : payload.mediaUrl
+            ? [payload.mediaUrl]
+            : [];
+        const parts: string[] = [];
+        if (payload.text) parts.push(payload.text);
+        for (const url of mediaList) parts.push(`![media](${url})`);
+        if (parts.length > 0) {
+          completedParts.push(parts.join("\n"));
           currentStreamText = "";
-          // Flush immediately on completed message
           if (sendTimer) { clearTimeout(sendTimer); sendTimer = null; }
           sendOutput();
         }
@@ -1306,8 +1548,7 @@ async function handleTaskRun(
       const { dispatcher, replyOptions, markDispatchIdle } =
         runtime.channel.reply.createReplyDispatcherWithTyping({
           deliver: async (payload: unknown) => {
-            const p = payload as { text?: string; mediaUrl?: string };
-            await deliver(p);
+            await deliver(payload as DeliverPayload);
           },
           onTypingStart: () => {},
           onTypingStop: () => {},
@@ -1320,6 +1561,18 @@ async function handleTaskRun(
         replyOptions: {
           ...replyOptions,
           onPartialReply,
+          onReasoningStream: async (payload: { text?: string }) => {
+            if (!client?.connected || !payload.text) return;
+            const enc = await encryptForStream(client, payload.text);
+            client.send({
+              type: "agent.activity",
+              sessionKey,
+              runId: jobId,
+              kind: "reasoning",
+              text: enc.text,
+              ...(enc.encrypted ? { encrypted: true, activityId: enc.id } : {}),
+            });
+          },
           allowPartialStream: true,
         },
       });

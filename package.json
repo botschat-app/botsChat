@@ -1,6 +1,6 @@
 {
   "name": "botschat",
-  "version": "0.1.15",
+  "version": "0.1.18",
   "description": "A self-hosted chat interface for OpenClaw AI agents",
   "workspaces": [
     "packages/*"
@@ -24,6 +24,9 @@
     "android:open": "npx cap open android",
     "android:run": "npx cap run android",
     "android:sync": "npx cap sync android",
+    "mac:build": "npm run build -w packages/web && cd macos && xcodegen generate",
+    "mac:open": "cd macos && xcodegen generate && open BotsChatMac.xcodeproj",
+    "mac:run": "npm run mac:build && xcodebuild -project macos/BotsChatMac.xcodeproj -scheme BotsChatMac -configuration Debug build && open macos/build/Debug/BotsChat.app",
     "test:e2e": "npx tsx scripts/verify-e2e.ts && npx tsx packages/e2e-crypto/e2e-crypto.test.ts",
     "test:e2e-db": "npx tsx scripts/verify-e2e-db.ts"
   },

@@ -34,8 +34,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   </React.StrictMode>,
 );
 
-// Register service worker for PWA support — skip in Capacitor (native has its own caching)
-if (!Capacitor.isNativePlatform() && "serviceWorker" in navigator) {
+// Register service worker for PWA support — skip in native apps (iOS/Android/macOS)
+const isNativePlatform = Capacitor.isNativePlatform() || !!(window as any).__BOTSCHAT_NATIVE__;
+if (!isNativePlatform && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {
       // SW registration failed — non-critical, app still works

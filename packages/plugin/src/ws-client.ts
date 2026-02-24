@@ -117,12 +117,14 @@ export class BotsChatCloudClient {
       const status = res?.statusCode ?? 0;
       const retryAfter = parseInt(res?.headers?.["retry-after"] ?? "0", 10);
       if (status === 429 && retryAfter > 0) {
-        this.log("warn", `Rate-limited (429), backing off ${retryAfter}s`);
-        this.backoffMs = retryAfter * 1000;
+        // Never let the server's Retry-After reduce our exponential backoff
+        const serverMs = retryAfter * 1000;
+        this.backoffMs = Math.max(this.backoffMs, serverMs);
+        this.log("warn", `Rate-limited (429), backing off ${Math.round(this.backoffMs / 1000)}s`);
       } else if (status === 503) {
         const secs = retryAfter || 300;
-        this.log("warn", `Service unavailable (503), backing off ${secs}s`);
-        this.backoffMs = secs * 1000;
+        this.backoffMs = Math.max(this.backoffMs, secs * 1000);
+        this.log("warn", `Service unavailable (503), backing off ${Math.round(this.backoffMs / 1000)}s`);
       }
       // ws will emit 'close' after this, triggering scheduleReconnect
     });
@@ -209,12 +211,15 @@ export class BotsChatCloudClient {
 
   private scheduleReconnect(): void {
     if (this.intentionalClose) return;
-    this.log("info", `Reconnecting in ${this.backoffMs}ms`);
+    // Add ±25% jitter to prevent reconnection storms across multiple clients
+    const jitter = 0.75 + Math.random() * 0.5; // 0.75 – 1.25
+    const delayMs = Math.round(this.backoffMs * jitter);
+    this.log("info", `Reconnecting in ${delayMs}ms (backoff=${this.backoffMs}ms)`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
       this.connect();
-    }, this.backoffMs);
+    }, delayMs);
   }
 
   private startPing(): void {

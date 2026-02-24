@@ -178,6 +178,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const sessionKey = event.notification.data?.sessionKey;
 
   event.waitUntil(
     clients
@@ -188,10 +189,17 @@ self.addEventListener("notificationclick", (event) => {
             client.url.includes("console.botschat.app") ||
             client.url.includes("localhost")
           ) {
+            if (sessionKey) {
+              client.postMessage({ type: "push-nav", sessionKey });
+            }
             return client.focus();
           }
         }
-        return clients.openWindow("https://console.botschat.app");
+        // No existing window — open a new one with the sessionKey hint
+        const url = sessionKey
+          ? "https://console.botschat.app/?push_session=" + encodeURIComponent(sessionKey)
+          : "https://console.botschat.app";
+        return clients.openWindow(url);
       })
   );
 });

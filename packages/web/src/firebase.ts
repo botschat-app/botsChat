@@ -60,9 +60,10 @@ function getFirebaseAuth(): Auth {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
 
-    // In Capacitor native, WKWebView's IndexedDB can hang Firebase Auth.
+    // In native WKWebViews (Capacitor or macOS), IndexedDB can hang Firebase Auth.
     // Use in-memory persistence to avoid this.
-    if (Capacitor.isNativePlatform()) {
+    const isNative = Capacitor.isNativePlatform() || !!(window as any).__BOTSCHAT_NATIVE__;
+    if (isNative) {
       setPersistence(auth, inMemoryPersistence).catch(() => {});
     }
   }

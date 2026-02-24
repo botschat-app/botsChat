@@ -1,0 +1,53 @@
+name: BotsChatMac
+options:
+  bundleIdPrefix: app.botschat
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: C5N5PPC329
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+targets:
+  BotsChatMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: BotsChatMac
+        excludes:
+          - "*.xcassets/AppIcon.appiconset/*.png"
+    resources:
+      - path: BotsChatMac/Assets.xcassets
+      - path: BotsChatMac/AppIcon.icns
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.botschat.mac
+        PRODUCT_NAME: BotsChat
+        INFOPLIST_FILE: BotsChatMac/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BotsChatMac/BotsChatMac.entitlements
+        CODE_SIGN_STYLE: Automatic
+        COMBINE_HIDPI_IMAGES: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ENABLE_HARDENED_RUNTIME: "YES"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    preBuildScripts:
+      - name: "Copy Web Assets"
+        script: |
+          # Copy built web assets into the app bundle
+          WEB_DIST="${SRCROOT}/../packages/web/dist"
+          DEST="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/web-dist"
+          if [ -d "$WEB_DIST" ]; then
+            mkdir -p "$DEST"
+            rsync -a --delete "$WEB_DIST/" "$DEST/"
+            echo "✓ Copied web assets to $DEST"
+          else
+            echo "⚠ Web dist not found at $WEB_DIST — run 'npm run build -w packages/web' first"
+          fi
+        basedOnDependencyAnalysis: false

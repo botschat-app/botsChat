@@ -135,9 +135,10 @@ export function LoginPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center"
+      className="h-screen overflow-y-auto"
       style={{ background: "var(--bg-secondary)" }}
     >
+      <div className="min-h-full flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-8">
@@ -380,6 +381,7 @@ export function LoginPage() {
             </a>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

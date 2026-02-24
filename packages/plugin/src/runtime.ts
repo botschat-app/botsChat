@@ -18,3 +18,16 @@ export function getBotsChatRuntime(): any {
   }
   return _runtime;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _api: any | null = null;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function setBotsChatApi(api: any): void {
+  _api = api;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getBotsChatApi(): any | null {
+  return _api;
+}

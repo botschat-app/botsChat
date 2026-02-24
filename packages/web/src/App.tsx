@@ -9,11 +9,12 @@ import {
   type ChatMessage,
   type AppState,
   type ActiveView,
+  type ActivityItem,
 } from "./store";
 import { getToken, setToken, setRefreshToken, agentsApi, channelsApi, tasksApi, jobsApi, authApi, messagesApi, modelsApi, meApi, sessionsApi, type ModelInfo, type AgentV2 } from "./api";
 import { ModelSelect } from "./components/ModelSelect";
 import { BotsChatWSClient, type WSMessage } from "./ws";
-import { initPushNotifications, getPendingPushNav, clearPendingPushNav } from "./push";
+import { initPushNotifications, getPendingPushNav, clearPendingPushNav, notifyIfBackground } from "./push";
 import { setupForegroundDetection, sendFocusUpdate } from "./foreground";
 import { IconRail } from "./components/IconRail";
 import { Sidebar } from "./components/Sidebar";
@@ -605,6 +606,15 @@ export default function App() {
       // Log every incoming WS message
       dlog.wsIn("WS", `${msg.type}`, msg);
 
+      // macOS native notification for background messages
+      notifyIfBackground({
+        type: msg.type,
+        text: msg.text as string | undefined,
+        caption: msg.caption as string | undefined,
+        sessionKey: sessionKey,
+        agentName: msg.agentName as string | undefined,
+      });
+
       // Helper: extract base sessionKey (strip ":thread:*" suffix) for comparison
       const getBaseSessionKey = (sk: string | undefined): string | undefined => {
         if (!sk) return undefined;
@@ -693,6 +703,33 @@ export default function App() {
             runId: msg.runId as string,
           });
           break;
+
+        case "agent.activity": {
+          if (!isCurrentSession(sessionKey)) break;
+          const actRunId = (msg.runId as string) || state.streamingRunId || `activity_${Date.now()}`;
+          if (!state.streamingRunId && sessionKey) {
+            const streamThreadId = (msg as any).threadId ?? sessionKey.match(/:thread:(.+)$/)?.[1];
+            dispatch({
+              type: "STREAM_START",
+              runId: actRunId,
+              sessionKey,
+              threadId: streamThreadId,
+            });
+          }
+          dispatch({
+            type: "STREAM_ACTIVITY",
+            runId: actRunId,
+            sessionKey: sessionKey ?? "",
+            activity: {
+              kind: msg.kind as "reasoning" | "tool_start" | "tool_end",
+              text: msg.text as string | undefined,
+              toolName: msg.toolName as string | undefined,
+              durationMs: msg.durationMs as number | undefined,
+              timestamp: Date.now(),
+            },
+          });
+          break;
+        }
 
         case "agent.text": {
           // Skip messages for sessions we're not viewing — they'll be loaded

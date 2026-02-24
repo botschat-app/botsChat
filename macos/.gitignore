@@ -1,0 +1,13 @@
+# Xcode generated project (regenerated from project.yml via xcodegen)
+BotsChatMac.xcodeproj/
+
+# Xcode build artifacts
+build/
+DerivedData/
+
+# User-specific Xcode settings
+*.xcuserdata
+*.xcuserstate
+
+# macOS
+.DS_Store

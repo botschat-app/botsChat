@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAppState, useAppDispatch } from "../store";
 import { tasksApi, type Task } from "../api";
+import { useIMEComposition } from "../hooks/useIMEComposition";
 
 const SCHEDULE_PRESETS = [
   { label: "Every 30 min", value: "every 30m" },
@@ -18,6 +19,7 @@ export function TaskBar() {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [showCreate, setShowCreate] = useState(false);
+  const { onCompositionStart, onCompositionEnd, isIMEActive } = useIMEComposition();
   const [newTaskName, setNewTaskName] = useState("");
   const [newTaskKind, setNewTaskKind] = useState<"adhoc" | "background">("adhoc");
   const [newSchedule, setNewSchedule] = useState("");
@@ -200,7 +202,9 @@ export function TaskBar() {
               placeholder="Task name"
               value={newTaskName}
               onChange={(e) => setNewTaskName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && handleCreate()}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && !isIMEActive() && handleCreate()}
+              onCompositionStart={onCompositionStart}
+              onCompositionEnd={onCompositionEnd}
               className="px-2 py-1 text-caption rounded-sm focus:outline-none w-36 placeholder:text-[--text-muted]"
               style={{
                 background: "var(--bg-hover)",

@@ -182,9 +182,10 @@ openclaw gateway restart`
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4"
+      className="h-screen overflow-y-auto"
       style={{ background: "var(--bg-secondary)" }}
     >
+      <div className="min-h-full flex items-center justify-center p-4">
       <div className="w-full max-w-xl">
         {/* Header */}
         <div className="text-center mb-8">
@@ -562,6 +563,7 @@ openclaw gateway restart`
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
