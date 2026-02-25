@@ -784,6 +784,33 @@ async function handleCloudMessage(
         // Finalize the context (normalizes fields, resolves agent route)
         const finalizedCtx = runtime.channel.reply.finalizeInboundContext(msgCtx);
 
+        // Record session metadata and update delivery route so that cron
+        // delivery with channel:"botschat" can resolve the target.
+        // Without this, lastChannel is never set to "botschat" in the
+        // session store, causing delivery resolution to fail.
+        if (runtime.channel.session?.recordInboundSession) {
+          try {
+            const storePath = runtime.channel.session.resolveStorePath(cfg);
+            await runtime.channel.session.recordInboundSession({
+              storePath,
+              sessionKey: finalizedCtx.SessionKey ?? msg.sessionKey,
+              ctx: finalizedCtx,
+              updateLastRoute: {
+                sessionKey: finalizedCtx.SessionKey ?? msg.sessionKey,
+                channel: "botschat",
+                to: msg.sessionKey,
+                accountId: ctx.accountId ?? "default",
+                ...(threadId ? { threadId } : {}),
+              },
+              onRecordError: (err: unknown) => {
+                console.error("[botschat] failed updating session meta:", err);
+              },
+            });
+          } catch (err) {
+            console.error("[botschat] recordInboundSession error:", err);
+          }
+        }
+
       // Create a reply dispatcher that sends responses back through the cloud WSS
       // NOTE: reuses `client` from line ~424 (same block scope, same value)
       console.log(`[botschat] client for accountId=${ctx.accountId}: connected=${client?.connected}`);
@@ -1481,6 +1508,29 @@ async function handleTaskRun(
       };
 
       const finalizedCtx = runtime.channel.reply.finalizeInboundContext(msgCtx);
+
+      // Record session metadata for cron dispatch path (same as user message path)
+      if (runtime.channel.session?.recordInboundSession) {
+        try {
+          const storePath = runtime.channel.session.resolveStorePath(cfg);
+          await runtime.channel.session.recordInboundSession({
+            storePath,
+            sessionKey: finalizedCtx.SessionKey ?? sessionKey,
+            ctx: finalizedCtx,
+            updateLastRoute: {
+              sessionKey: finalizedCtx.SessionKey ?? sessionKey,
+              channel: "botschat",
+              to: sessionKey,
+              accountId: ctx.accountId ?? "default",
+            },
+            onRecordError: (err: unknown) => {
+              console.error("[botschat] failed updating session meta (cron):", err);
+            },
+          });
+        } catch (err) {
+          console.error("[botschat] recordInboundSession error (cron):", err);
+        }
+      }
 
       // Collect the agent's reply as summary + stream output in real-time
       // We accumulate completed message blocks and current streaming text.
