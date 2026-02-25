@@ -20,7 +20,9 @@
       "docsLabel": "botschat",
       "blurb": "E2E encrypted cloud chat interface for OpenClaw agents",
       "order": 80,
-      "aliases": ["botschat"]
+      "aliases": [
+        "botschat"
+      ]
     },
     "install": {
       "npmSpec": "@botschat/botschat",
