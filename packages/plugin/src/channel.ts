@@ -242,7 +242,10 @@ export const botschatPlugin = {
     },
   },
 
-  reload: { configPrefixes: ["channels.botschat"] },
+  reload: {
+    configPrefixes: ["channels.botschat"],
+    noopPrefixes: ["plugins.installs.botschat"],
+  },
 
   config: {
     listAccountIds: (cfg: unknown) => listBotsChatAccountIds(cfg),
