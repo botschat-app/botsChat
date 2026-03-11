@@ -242,7 +242,10 @@ export const botschatPlugin = {
     },
   },
 
-  reload: { configPrefixes: ["channels.botschat"] },
+  reload: {
+    configPrefixes: ["channels.botschat"],
+    noopPrefixes: ["plugins.installs.botschat"],
+  },
 
   config: {
     listAccountIds: (cfg: unknown) => listBotsChatAccountIds(cfg),
@@ -266,6 +269,12 @@ export const botschatPlugin = {
 
   outbound: {
     deliveryMode: "direct" as const,
+
+    resolveTarget: ({ to }: { to?: string; allowFrom?: string[]; accountId?: string | null; mode?: string }) => {
+      const trimmed = to?.trim();
+      if (trimmed) return { ok: true as const, to: trimmed };
+      return { ok: true as const, to: "@default" };
+    },
 
     sendText: async (ctx: {
       to: string;
